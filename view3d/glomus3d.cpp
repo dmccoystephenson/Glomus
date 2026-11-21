@@ -2,7 +2,7 @@
 //
 // The page owns the world (game/world.js) and turns it into plain arrays in game/view3d.js:
 // the ground as a terrain tile, the water as one translucent mesh, animals as small spheres and
-// outlines (the spot, tool rings) as lines. This file keeps the latest copy of each, so a lost
+// outlines (the spot, tool rings, strokes, rain) as lines. This file keeps the latest copy of each, so a lost
 // WebGL context can be rebuilt from it, and draws them. It knows nothing about Glomus's rules.
 //
 // Built with Strata's web kit (build.sh); the outputs in game/3d/ are committed.
@@ -29,6 +29,7 @@ Ground ground;
 Water water;
 std::vector<float> marks;  // x, y, z, radius, r, g, b per animal
 std::vector<float> lines;  // x0, y0, z0, x1, y1, z1, r, g, b, a per segment
+std::vector<float> wide;   // the same, then width in pixels, width in metres and STRATA_LINES_* flags
 
 void uploadGround(strata_kit::Host& h) {
     if (!h.engine || ground.nx < 2 || ground.nz < 2) return;
@@ -94,6 +95,10 @@ void strata_kit_build(strata_kit::Host& h, double) {
     for (size_t k = 0; k + 10 <= lines.size(); k += 10)
         h.line(lines[k], lines[k + 1], lines[k + 2], lines[k + 3], lines[k + 4], lines[k + 5],
                {lines[k + 6], lines[k + 7], lines[k + 8]}, lines[k + 9]);
+    for (size_t k = 0; k + 13 <= wide.size(); k += 13)
+        h.wideLine(wide[k], wide[k + 1], wide[k + 2], wide[k + 3], wide[k + 4], wide[k + 5],
+                   {wide[k + 6], wide[k + 7], wide[k + 8]}, wide[k + 10], wide[k + 11], wide[k + 9],
+                   static_cast<uint32_t>(wide[k + 12]) & (STRATA_LINES_ON_TOP | STRATA_LINES_ROUND_CAPS));
 }
 
 // The ground: nx * nz heights and linear RGB colours, sample (0, 0) at (x0, z0).
@@ -129,4 +134,11 @@ STRATA_KIT_EXPORT void g3_set_marks(const float* data, int n) {
 // Outlines: n segments of (x0, y0, z0, x1, y1, z1, r, g, b, a).
 STRATA_KIT_EXPORT void g3_set_lines(const float* data, int n) {
     lines.assign(data, data + (n > 0 ? n * 10 : 0));
+}
+
+// Wide outlines: n segments of (x0, y0, z0, x1, y1, z1, r, g, b, a, width in pixels, width in metres, flags),
+// drawn as wide as the wider of the two on screen. Flags are STRATA_LINES_ON_TOP (shows through hills) and
+// STRATA_LINES_ROUND_CAPS.
+STRATA_KIT_EXPORT void g3_set_wide_lines(const float* data, int n) {
+    wide.assign(data, data + (n > 0 ? n * 13 : 0));
 }

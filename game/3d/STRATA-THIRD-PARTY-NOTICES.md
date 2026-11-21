@@ -98,3 +98,33 @@ License: Public Domain
 
 Based on font8x8.h by Marcel Sondaar and the public domain IBM VGA fonts.
 ```
+
+## Emscripten runtime (added for the web build in this folder)
+
+`glomus3d.js` and `glomus3d.wasm` were built with Emscripten 6.0.11, which puts its JavaScript runtime and
+parts of its C and C++ libraries into the output. Emscripten is MIT (or the University of Illinois/NCSA
+licence); its C library is musl (MIT); libc++ and libc++abi are Apache-2.0 with the LLVM exception, which
+needs no notice in built code.
+
+```
+Copyright (c) 2010-2014 Emscripten authors, see AUTHORS file.
+Copyright © 2005-2020 Rich Felker, et al. (musl)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+```

@@ -78,6 +78,29 @@ You can't steer it. You can only change the land around it.
 - Animals can't fly, swim, breed, form herds or hunt yet. Whims that ask for those come back as proposals. See
   `docs/CREATURES.md`.
 
+### In 3D
+
+Press **3D** in the header (or **V**) to see the same world in 3D, drawn with
+[Strata](https://github.com/Preponderous-Software/strata). Drag to turn it, scroll or pinch to zoom, and
+right-drag or Shift-drag to pan. It shows what the map shows:
+
+- Tapping the land picks a spot or uses a click tool. With a drag tool picked, a drag draws the stroke over
+  the land and uses the tool along it, as on the map; Alt-drag or middle-drag then turns the view, and on a
+  phone two fingers still pan and zoom (pick Spot to turn it with one finger).
+- Hovering reads out the tile or animal under the pointer, with the tool's brush ring.
+- Tool uses still at work (bright while acting, faint while holding), the skein you hover in the Skeins list,
+  whims being made (waiting, working, needing your OK, fizzled), the flash after a use and its note.
+- Rain, animals in their species' colour and pattern, and a × where one died.
+
+**Walk** (or **B**) puts you on the land as a visitor, seen from behind. **W A S D** or the arrows walk, **Q**
+and **E** turn, **Shift** hurries, and dragging still turns the view. **C** switches to seeing through the
+visitor's eyes and back. **R** puts the spot where you stand, or uses the picked tool there. You follow the
+ground, wade slowly through shallow water, and are stopped by deep water and cliffs. On a phone a stick and two
+buttons appear. The visitor is only a way of looking: the world and its animals don't know you're there.
+
+**Map** goes back to the flat view. http://127.0.0.1:8840/3d shows your saved world full-window and keeps it
+living. That page only watches, so nothing there is saved.
+
 ## The model
 
 `config/model.json` names the model server. By default it starts llama.cpp's `llama-server` with Qwen3.8
@@ -85,13 +108,17 @@ You can't steer it. You can only change the land around it.
 OpenAI-compatible server with tool calling (Ollama, LM Studio, vLLM) works if its `baseUrl` and `alias`
 match; remove the `launch` section to use one that is already running.
 
-### In 3D
+To use another server without editing `config/model.json`, put the parts that differ in
+`config/model.local.json`, which git ignores:
 
-Press **3D** in the header (or **V**) to see the same world in 3D, drawn with
-[Strata](https://github.com/Preponderous-Software/strata). Drag to turn it, scroll or pinch to zoom, and
-right-drag or Shift-drag to pan. Tapping the land picks a spot or uses a click tool, as on the map. Drag tools
-are drawn on the map. **Map** goes back to the flat view. http://127.0.0.1:8840/3d shows your saved world
-full-window and keeps it living. That page only watches, so nothing there is saved.
+```json
+{ "baseUrl": "http://my-gpu-box:8000/v1", "alias": "qwen-coder", "apiKey": "..." }
+```
+
+or set `GLOMUS_MODEL_URL`, `GLOMUS_MODEL_ALIAS` and `GLOMUS_MODEL_KEY`, which beat both files. When either
+one moves `baseUrl`, nothing is started. The key is only sent as the model server's `Authorization` header:
+it isn't logged, sent to the page or saved with the whims. A server that answers 503, or says on `/health`
+that it's paused, shows as busy, and whims wait in the queue until it's back.
 
 ## How it's built
 
@@ -112,13 +139,16 @@ full-window and keeps it living. That page only watches, so nothing there is sav
 - `server/server.js`: the local server. Every whim is saved as a replayable case in `workspace/whims/`: the
   world it started from, the full transcript, each tool call and the result.
 - `server/model.js`: finds or starts the model server.
+- `game/walk3d.js`: walking the 3D view. It reads the ground to stand on and moves the camera, and never changes
+  the world.
 - `game/view3d.js`: the 3D view. It turns the world into arrays (the ground, the water as one translucent
-  mesh, the animals and the spot ring) and hands them to `game/3d/glomus3d.wasm`, a small
+  mesh, the animals, and the page's outlines, rain and animal marks as wide lines; labels are HTML over the
+  canvas) and hands them to `game/3d/glomus3d.wasm`, a small
   [Strata web kit](https://github.com/Preponderous-Software/strata/blob/main/docs/WEB.md) scene built from
-  `view3d/glomus3d.cpp` by `view3d/build.sh` against Strata 0.9.0. It never changes the world. The built
-  files are committed and pinned in `game/3d/SHA256SUMS`, so playing needs no build. Strata is MIT
-  (`game/3d/STRATA-LICENSE`, `STRATA-THIRD-PARTY-NOTICES.md`). The engine loads only when the view is
-  first opened.
+  `view3d/glomus3d.cpp` by `view3d/build.sh` (emsdk 6.0.11, Strata 0.9.0). It never changes the world. The
+  built files are committed and pinned in `game/3d/SHA256SUMS`, so playing needs no build, and a rebuild
+  gives the same bytes. Strata is MIT (`game/3d/STRATA-LICENSE`, `STRATA-THIRD-PARTY-NOTICES.md`). The
+  engine loads only when the view is first opened.
 
 A plan is data, not code: it can only name areas, materials, conditions and actions the game knows, with
 bounded amounts, so nothing a model writes reaches beyond the map. Every skein can be switched off, erased
@@ -128,6 +158,7 @@ or rewound.
 
 ```powershell
 npm test                                    # the world, tools, undo, animals and the honesty checks (77 checks, no model)
+npm run test:3d                             # the 3D view in headless Chromium: taps, tools, strokes, hover, rain, phone touch
 npm run eval                                # every eval case through the real model
 npm run eval -- --only floodgate --repeat 3
 ```

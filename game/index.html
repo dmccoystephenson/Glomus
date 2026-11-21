@@ -114,12 +114,13 @@
   <button id="rain" class="small" title="Start or stop the rain">Rain</button>
   <button id="pause" class="small" title="Space">Pause</button>
   <button id="speed" class="small" title="Simulation speed">1×</button>
-  <button id="view3d" class="small" title="See the world in 3D: drag to turn, scroll or pinch to zoom, tap to pick a spot or use a tool (V)" aria-pressed="false">3D</button>
+  <button id="view3d" class="small" title="See the world in 3D: drag to turn, scroll or pinch to zoom, tap to pick a spot or use a tool, drag with a drag tool (V)" aria-pressed="false">3D</button>
+  <button id="walk" class="small" title="Walk the land in 3D as a visitor: W A S D or the arrows, Q/E turn, Shift hurries, C switches between behind and through the eyes, R puts the spot or uses your tool where you stand (B)" aria-pressed="false">Walk</button>
   <button id="newworld" class="small">New world</button>
 </header>
 <main>
   <section class="mapcol">
-    <div class="mapwrap"><canvas id="map" width="960" height="640" aria-label="The world map. Click to pick a spot, or to use the tool you picked."></canvas><canvas id="map3d" hidden aria-label="The world in 3D. Drag to turn it, scroll or pinch to zoom, tap to pick a spot or use a tool."></canvas></div>
+    <div class="mapwrap"><canvas id="map" width="960" height="640" aria-label="The world map. Click to pick a spot, or to use the tool you picked."></canvas><canvas id="map3d" hidden aria-label="The world in 3D. Drag to turn it, scroll or pinch to zoom, tap to pick a spot or use a tool. With a drag tool, a drag draws it; Alt-drag turns."></canvas></div>
     <div id="hover" class="hover"></div>
     <div class="timebar">
       <span class="hint">Rewind</span>
@@ -182,6 +183,7 @@
 </main>
 <script type="module">
 import * as WF from "./world.js";
+import { createWalker } from "./walk3d.js";
 const { W, H, TPS, WET, MAX_H } = WF;
 // ?seed=N starts a fresh world from that seed in its own save slot, leaving the player's world alone.
 const SEED = new URLSearchParams(location.search).get("seed");
@@ -482,6 +484,7 @@ $("legendBox").addEventListener("toggle", () => { if ($("legendBox").open) rende
 
 // ---------- the palette: Spot, size, undo, and the player's tools ----------
 const DEFAULT_HINT = "Click the map to pick a spot (size it with ◀ ▶ or [ ]). The model calls it \"here\".";
+const HINT_3D = "Tap the land to pick a spot · drag to turn the view, right-drag or two fingers to pan, scroll or pinch to zoom.";
 function toolInfo(id) { if (id === "spot") return null; const f = WF.findPower(world, id); return f && !f.power.retired ? f : null; }
 function paletteTools() { const out = []; for (const s of world.skeins) for (const p of s.powers || []) if (!p.retired) out.push({ skein: s, power: p }); return out; }
 function initials(name) { const w = name.trim().split(/\s+/); return (w.length > 1 ? w[0][0] + w[1][0] : name.slice(0, 2)).toUpperCase(); }
@@ -493,8 +496,10 @@ function selectTool(id) {
   renderPalette(); showHint();
 }
 function showHint() {
-  const info = toolInfo(tool);
-  $("hover").textContent = info ? `${info.power.icon || "🛠"} ${info.power.name}: ${info.power.brush.stroke ? `drag across the map to use it (${sizes[tool]} wide)` : `click the map to use it (radius ${sizes[tool]})`} · Esc goes back to Spot` : DEFAULT_HINT;
+  const info = toolInfo(tool), in3d = !$("map3d").hidden;
+  $("hover").textContent = info ? `${info.power.icon || "🛠"} ${info.power.name}: ${info.power.brush.stroke ? `drag across the ${in3d ? "land" : "map"} to use it (${sizes[tool]} wide)` : `${in3d ? "tap" : "click"} the ${in3d ? "land" : "map"} to use it (radius ${sizes[tool]})`}` +
+    (in3d && info.power.brush.stroke ? (matchMedia("(pointer: coarse)").matches ? " · two fingers pan and zoom; pick Spot to turn the view" : " · to turn the view, Alt-drag or middle-drag; right-drag pans") : "") + " · Esc goes back to Spot"
+    : in3d ? HINT_3D : DEFAULT_HINT;
 }
 function renderPalette() {
   const box = $("yourTools"), tools = paletteTools();
@@ -565,8 +570,9 @@ canvas.addEventListener("pointerdown", (ev) => {
   if (info.power.brush.stroke) { stroking = { points: [[x, y]] }; canvas.setPointerCapture(ev.pointerId); return; }
   applyUse(info, { x, y, r: sizes[tool] }, x, y);
 });
-canvas.addEventListener("pointermove", (ev) => {
-  const [x, y] = tileAt(ev), i = y * W + x, info = toolInfo(tool);
+/** What's under the pointer, in #hover: an animal, or the tile and the tool in hand. Both views use it. */
+function readout(x, y) {
+  const i = y * W + x, info = toolInfo(tool);
   hoverTile = [x, y];
   const pet = animalAt(x, y);
   hoverAnimal = pet ? pet.id : null;
@@ -576,9 +582,13 @@ canvas.addEventListener("pointermove", (ev) => {
       `🐾 ${pet.name} (${pet.species}) · water ${Math.round(pet.thirst * 100)}% · food ${Math.round(pet.hunger * 100)}% · ${pet.state} · alive ${clock(life.ageSeconds)}`;
     return;
   }
-  if (stroking) { const last = stroking.points[stroking.points.length - 1]; if (Math.hypot(x - last[0], y - last[1]) >= 1) stroking.points.push([x, y]); }
   $("hover").textContent = (info ? `${info.power.icon || "🛠"} ${info.power.name} (${info.power.brush.stroke ? sizes[tool] + " wide" : "radius " + sizes[tool]}) · Esc for Spot · ` : "") +
     `(${x}, ${y}) · ground ${world.height[i].toFixed(1)} m · water ${world.water[i].toFixed(2)} m · ${world.materials[world.mat[i]].name}`;
+}
+canvas.addEventListener("pointermove", (ev) => {
+  const [x, y] = tileAt(ev);
+  if (stroking) { const last = stroking.points[stroking.points.length - 1]; if (Math.hypot(x - last[0], y - last[1]) >= 1) stroking.points.push([x, y]); }
+  readout(x, y);
 });
 canvas.addEventListener("pointerup", () => {
   if (!stroking) return;
@@ -876,6 +886,7 @@ document.addEventListener("keydown", (ev) => {
   if (ev.key === "Escape") { if (tool !== "spot") selectTool("spot"); else { spot = null; showSpot(); } }
   if (/^[1-9]$/.test(ev.key) && !ev.ctrlKey && !ev.metaKey && !ev.altKey) { const t = paletteTools()[Number(ev.key) - 1]; if (t) selectTool(t.power.id); }
   if (ev.key.toLowerCase() === "v" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) toggle3d();
+  if (ev.key.toLowerCase() === "b" && !ev.ctrlKey && !ev.metaKey && !ev.altKey) toggleWalk();
   if (ev.key === "[") changeSize(-1);
   if (ev.key === "]") changeSize(1);
   if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "z") { ev.preventDefault(); undoLastUse(); }
@@ -898,13 +909,100 @@ $("rewind").onclick = () => {
 };
 
 // ---------- the 3D view (view3d.js): loaded the first time it's asked for ----------
-let view3d = null, loading3d = false;
+let view3d = null, loading3d = false, walkPad = null;
+// Walking (walk3d.js): a visitor on the land. The simulation never sees it; R uses the spot or tool where it stands.
+const walker = createWalker({
+  WF, world: () => world,
+  onStatus: (text) => { if (text) $("hover").textContent = text; },
+  onUseHere: (x, y) => {
+    const info = toolInfo(tool);
+    if (info && info.power.brush.stroke) stroke3d([[x, y]]); else tapTile(x, y);
+  },
+});
+const coarse = matchMedia("(pointer: coarse)").matches;
+async function toggleWalk() {
+  if ($("map3d").hidden) await toggle3d();
+  if (!view3d) return;
+  if (walker.on) walker.stop();
+  else {
+    const pet = (world.creatures || []).find((c) => !c.dead);
+    const from = spot ? [spot.x, spot.y] : pet ? [pet.x + 2, pet.y + 2] : [W / 2, H / 2];
+    walker.start(view3d.kit, from[0], from[1]);
+    $("map3d").focus();
+  }
+  if (!walkPad) walkPad = walker.stickPad(canvas.parentElement);
+  walkPad.show(walker.on && coarse);
+  $("walk").textContent = walker.on ? "Stop walking" : "Walk";
+  $("walk").setAttribute("aria-pressed", String(walker.on));
+  if (!walker.on) showHint();
+}
+$("walk").onclick = toggleWalk;
+window.__glomusWalker = () => walker;
 function tapTile(x, y) {
   const info = toolInfo(tool);
   if (!info) { spot = { x, y, r: sizes.spot }; showSpot(); return; }
-  if (info.power.brush.stroke) { $("hover").textContent = `${info.power.name} is drawn by dragging: use it on the flat map.`; return; }
+  if (info.power.brush.stroke) return;   // a drag tool's tap arrives as a one-point stroke (stroke3d)
   applyUse(info, { x, y, r: sizes[tool] }, x, y);
-  $("hover").textContent = useNote ? (useNote.message || `${info.power.name}: ${useNote.changed} tiles changed`) : "";
+  noteUse(info);
+}
+function noteUse(info) { $("hover").textContent = useNote ? (useNote.message || `${info.power.name}: ${useNote.changed} tiles changed`) : ""; }
+function stroke3d(points) {
+  stroking = null;
+  const info = toolInfo(tool);
+  if (!info || !info.power.brush.stroke || !points || !points.length) return;
+  const [x, y] = points[points.length - 1];
+  applyUse(info, { path: points, w: sizes[tool] }, x, y);
+  noteUse(info);
+}
+function hover3d(hit) {
+  if (hit) { readout(hit.x, hit.y); return; }
+  hoverTile = null; hoverAnimal = null; showHint();
+}
+/** What draw() puts over the flat map, for the 3D view: outlines (view3d.js's format) and labels at tiles. */
+function overlay3d(now) {
+  const outlines = [], labels = [], amber = "#e8b86a";
+  if (highlight) for (const area of highlight) outlines.push({ area, color: "#7cc4e8", alpha: 0.9, px: 2.5, dash: [1, 0.75] });
+  for (const q of queue) {
+    if (["done", "talked", "declined"].includes(q.status) || !q.spot) continue;
+    const area = { circle: [q.spot.x, q.spot.y, q.spot.r] }, at = { x: q.spot.x, y: q.spot.y - q.spot.r - 0.5 };
+    if (q.status === "fizzled") { outlines.push({ area, color: "#e8806a", alpha: 0.9, px: 2, dash: [0.5, 1] }); continue; }
+    if (q.status === "proposed") { outlines.push({ area, color: amber, alpha: 0.95, px: 2, dash: [0.5, 0.75] }); labels.push({ ...at, text: "needs your OK", color: amber }); continue; }
+    outlines.push({ area, color: amber, alpha: 0.95, px: 3, dash: [1.5, 1.2], offset: -now / 240 });
+    labels.push({ ...at, text: q.status === "asking" ? `working… ${Math.floor((Date.now() - q.started) / 1000)}s` : "waiting", color: amber });
+  }
+  fizzles = fizzles.filter((fz) => now - fz.at < 2500);
+  for (const fz of fizzles) {
+    const k = (now - fz.at) / 2500;
+    outlines.push({ area: { circle: [fz.x, fz.y, fz.r + 1 + k * 4] }, color: "#e8806a", alpha: 1 - k, px: 3, dash: [0.3, 1.2] });
+    labels.push({ x: fz.x, y: fz.y - fz.r - 1 - k * 2, text: "fizzled", color: "#e8806a", alpha: 1 - k });
+  }
+  for (const s of world.skeins) for (const p of s.powers || []) for (const u of p.uses) {
+    const st = (useStateCache.get(u.id) || {}).state;
+    if (!st || st === "done" || st === "expired") continue;
+    const acting = st === "acting", area = WF.useArea(u);
+    if (!area.path) outlines.push({ area, color: "#0a0e12", alpha: 0.45, px: acting ? 5 : 4 });
+    outlines.push(acting ? { area, color: "#aaeb96", alpha: 0.95, px: 2.5, dash: [1, 1], offset: -now / 480 } : { area, color: "#c8e1be", alpha: 0.6, px: 2, dash: [0.5, 1.25] });
+  }
+  const pet = hoverAnimal && (world.creatures || []).find((c) => c.id === hoverAnimal && !c.dead);
+  if (pet) outlines.push({ area: { circle: [pet.x - 0.5, pet.y - 0.5, 1.2] }, color: "#ffffff", alpha: 0.9, px: 2, dash: [0.4, 0.4], top: true });
+  flashes = flashes.filter((f) => now - f.at < 700);
+  for (const f of flashes) {
+    const k = (now - f.at) / 700;
+    outlines.push({ area: f.area ? f.area : { circle: [f.x, f.y, f.r + k * 2] }, color: f.ok ? "#8fcf7a" : "#e8806a", alpha: 1 - k, px: 3.5 });
+  }
+  const active = toolInfo(tool);
+  if (active && stroking) outlines.push({ area: { path: stroking.points, width: sizes[tool] }, color: "#aae1fa", px: 2, top: true });
+  else if (active && hoverTile) {
+    const area = { circle: [hoverTile[0], hoverTile[1], active.power.brush.stroke ? sizes[tool] / 2 : sizes[tool]] };
+    outlines.push({ area, color: "#0a0e12", alpha: 0.55, px: 4.5, top: true });
+    outlines.push({ area, color: "#aae1fa", px: 2, dash: [1.25, 1], offset: -now / 320, top: true });
+  }
+  if (useNote && now - useNote.at < 5000) {
+    const st = useNote.useId ? useStateCache.get(useNote.useId) : null;
+    const text = useNote.message || (st && st.state !== "done" ? st.text : useNote.changed === 0 ? "nothing changed here" : `${useNote.once || "changed"} (${useNote.changed} tiles)`);
+    labels.push({ x: useNote.x, y: useNote.y - useNote.r - 0.5, text, color: useNote.message ? "#e8806a" : "#cfe9c3", alpha: Math.min(1, (5000 - (now - useNote.at)) / 800) });
+  }
+  return { outlines, labels };
 }
 async function toggle3d() {
   const on = $("map3d").hidden;
@@ -914,7 +1012,13 @@ async function toggle3d() {
     $("map3d").hidden = false; canvas.hidden = true;
     try {
       const { open3d } = await import("./view3d.js");
-      view3d = await open3d({ canvas: $("map3d"), mount: canvas.parentElement, WF, world: () => world, spot: () => spot, onTap: tapTile });
+      view3d = await open3d({
+        canvas: $("map3d"), mount: canvas.parentElement, WF, world: () => world, spot: () => spot, overlay: overlay3d,
+        onTap: tapTile, onHover: hover3d, onStroke: stroke3d,
+        strokeWidth: () => { const info = toolInfo(tool); return info && info.power.brush.stroke ? sizes[tool] : null; },
+        onStrokeMove: (points, hit) => { stroking = points ? { points } : null; if (hit) readout(hit.x, hit.y); },
+        beforeFrame: walker.frame, extraMarks: walker.marks, extraLines: walker.lines, onKey: walker.canvasKey,
+      });
     } catch (e) {
       $("map3d").hidden = true; canvas.hidden = false; loading3d = false; $("view3d").textContent = "3D";
       $("hover").textContent = `The 3D view couldn't start: ${e && e.message ? e.message : e}`;
@@ -922,12 +1026,17 @@ async function toggle3d() {
     }
     loading3d = false;
   } else if (on) { $("map3d").hidden = false; canvas.hidden = true; view3d.resume(); }
-  else { view3d.pause(); $("map3d").hidden = true; canvas.hidden = false; fit(); }
+  else {
+    if (walker.on) await toggleWalk();
+    view3d.pause(); $("map3d").hidden = true; canvas.hidden = false; fit();
+  }
   $("view3d").textContent = $("map3d").hidden ? "3D" : "Map";
   $("view3d").setAttribute("aria-pressed", String(!$("map3d").hidden));
+  stroking = null; hoverTile = null; showHint();
 }
 $("view3d").onclick = toggle3d;
 window.__glomus3d = () => view3d;
+window.__glomusWorld = () => world;   // for tools (game/tools/view3d_test.js), as 3d.html has
 
 let last = performance.now(), carry = 0, lastSave = 0, lastUi = 0;
 function frame(now) {
@@ -940,7 +1049,7 @@ function frame(now) {
       if (world.tick % 50 === 0) { history.push({ tick: world.tick, snap: WF.snapshot(world) }); if (history.length > 36) history.shift(); }
     }
   }
-  draw(now);
+  if (!canvas.hidden) draw(now);   // the 3D view draws its own overlay (overlay3d)
   if (now - lastUi > 500) {
     lastUi = now; useStateCache = WF.useStates(world); updateActivity(); updateRewind(); updateUndo(); renderAnimals();
     $("clock").textContent = fmt(world.tick) + " · " + (world.weather.raining ? "raining" : "clear");

@@ -210,7 +210,7 @@ for (const c of suite.cases) {
       }
       caseBase = WF.save(w);
     }
-    const result = await shapeWhim({ world: WF.load(caseBase), spot: c.spot, whim: c.whim, model: localModel(config) });
+    const result = await shapeWhim({ world: WF.load(caseBase), spot: c.spot, whim: c.whim, model: localModel(config), apiKey: config.apiKey });
     const without = WF.load(caseBase), withPlan = WF.load(caseBase);
     const knownMaterials = withPlan.materials.length;
     let plan = null, skein = null;

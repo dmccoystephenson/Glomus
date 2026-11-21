@@ -19,7 +19,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const WORKSPACE = path.join(ROOT, "workspace");
 const FILES = { "/": "index.html", "/index.html": "index.html", "/world.js": "world.js",
   // The 3D view (game/view3d.js and the Strata engine built into game/3d/).
-  "/3d": "3d.html", "/3d.html": "3d.html", "/view3d.js": "view3d.js",
+  "/3d": "3d.html", "/3d.html": "3d.html", "/view3d.js": "view3d.js", "/walk3d.js": "walk3d.js",
   "/3d/glomus3d.js": "3d/glomus3d.js", "/3d/glomus3d.wasm": "3d/glomus3d.wasm",
   "/3d/strata-kit.js": "3d/strata-kit.js", "/3d/strata-loader.js": "3d/strata-loader.js" };
 const TYPES = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".wasm": "application/wasm" };
@@ -72,7 +72,7 @@ async function startWhim(input) {
   jobs.set(job.id, job); active = job;
   (async () => {
     try {
-      const result = await shapeWhim({ world, spot: input.spot, whim: input.whim, model, onEvent: (e) => job.events.push(e) });
+      const result = await shapeWhim({ world, spot: input.spot, whim: input.whim, model, apiKey: config.apiKey, onEvent: (e) => job.events.push(e) });
       job.result = { outcome: result.outcome, committed: result.committed, plan: result.plan, problems: result.problems,
         unsupported: result.unsupported, explain: result.explain, say: result.say,
         error: result.error, seconds: result.seconds, toolCalls: result.toolCalls };

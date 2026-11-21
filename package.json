@@ -4,8 +4,9 @@
   "description": "A living landscape that a local model reshapes and reprograms on your whims.",
   "main": "index.js",
   "scripts": {
-    "test": "node game/tools/world_test.js && node game/tools/claims_test.js && node game/tools/creatures_test.js",
-    "test:creatures": "node game/tools/creatures_test.js",
+    "test": "node game/tools/world_test.js && node game/tools/claims_test.js && node game/tools/creatures_test.js && node game/tools/model_config_test.js && node game/tools/shaper_args_test.js && node game/tools/walk3d_test.js",
+    "test:creatures": "node game/tools/creatures_test.js && node game/tools/model_config_test.js && node game/tools/shaper_args_test.js",
+    "test:3d": "node game/tools/view3d_test.js",
     "start": "node server/server.js",
     "eval": "node tools/eval.js",
     "record-demo": "node tools/record-demo.js && node tools/edit-demo.js",

@@ -161,6 +161,25 @@ const PlanParam = Type.Object({
 });
 const UnsupportedParam = Type.Array(Type.String(), { description: 'What part of the whim can\'t be done, a few words each, e.g. ["double-click", "days"]. At most 3.' });
 
+/**
+ * Some models' chat templates show earlier tool calls with nested arguments as Python-style text, e.g.
+ * "{'circle': [39, 3, 10]}", and the model then copies that form. Read such a string back as the object or
+ * list it spells; anything else is left exactly as it was.
+ */
+export function unstring(value) {
+  if (typeof value === "string") {
+    const s = value.trim();
+    if (!/^[[{][\s\S]*[\]}]$/.test(s)) return value;
+    for (const form of [s, s.replace(/'/g, '"').replace(/\bTrue\b/g, "true").replace(/\bFalse\b/g, "false").replace(/\bNone\b/g, "null")]) {
+      try { return unstring(JSON.parse(form)); } catch { /* Try the next form. */ }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) return value.map(unstring);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, unstring(v)]));
+  return value;
+}
+
 export function localModel(config) {
   return {
     id: config.alias, name: config.alias, api: "openai-completions", provider: "local",
@@ -323,10 +342,11 @@ function checked(world, plan, spot) {
 }
 
 /**
- * Run the shaper on a whim. world is a world object (a private copy is used), spot may be null.
+ * Run the shaper on a whim. world is a world object (a private copy is used), spot may be null. apiKey, if the
+ * model server needs one, is sent only as its Authorization header.
  * onEvent receives {kind, ...} progress events. Returns {outcome, committed, plan, unsupported, explain, say, events, messages, seconds, toolCalls}.
  */
-export async function shapeWhim({ world, spot, whim, model, onEvent = () => {}, signal }) {
+export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent = () => {}, signal }) {
   const copy = WF.load(WF.save(world));
   const events = [];
   const emit = (e) => { const ev = { at: Date.now(), ...e }; events.push(ev); onEvent(ev); };
@@ -337,7 +357,8 @@ export async function shapeWhim({ world, spot, whim, model, onEvent = () => {}, 
   const finishTool = (name, label, description) => ({
     name, label, description,
     parameters: name === "propose" ? Type.Object({ plan: PlanParam, unsupported: UnsupportedParam }) : Type.Object({ plan: PlanParam }),
-    execute: async (_id, p) => {
+    execute: async (_id, raw) => {
+      const p = unstring(raw);
       // Models sometimes drop name/say/unsupported between preview and commit; carry them over from the last preview.
       const plan = { ...p.plan, unsupported: p.unsupported || (p.plan && p.plan.unsupported) };
       if (lastTried && !plan.say) plan.say = lastTried.say;
@@ -389,7 +410,7 @@ export async function shapeWhim({ world, spot, whim, model, onEvent = () => {}, 
     {
       name: "look", label: "Look", description: "Heights, water and ground in an area. Areas under 24 tiles across include a tile-by-tile height grid.",
       parameters: Type.Object({ area: AreaParam }),
-      execute: async (_id, p) => text(lookAt(copy, p.area, spot)),
+      execute: async (_id, p) => text(lookAt(copy, unstring(p.area), spot)),
     },
     {
       name: "read_skein", label: "Read skein", description: "The full plan (materials, edits, threads) of an existing skein, by id.",
@@ -403,7 +424,8 @@ export async function shapeWhim({ world, spot, whim, model, onEvent = () => {}, 
     {
       name: "try_plan", label: "Try plan", description: `Check a plan and simulate it for ${PREVIEW_SECONDS} seconds on a copy of the world. Nothing real changes.`,
       parameters: Type.Object({ plan: PlanParam, use_at: Type.Optional(Type.Array(Type.Number(), { description: "Where to use the plan's tools once in the preview, [x, y]. Default: the spot." })) }),
-      execute: async (_id, p) => {
+      execute: async (_id, raw) => {
+        const p = unstring(raw);
         const c = checked(copy, p.plan, spot);
         if (!c.usable) throw new Error(c.head + "\nNothing in the plan could be used.");
         lastTried = { name: c.clean.name, say: c.clean.say, unsupported: p.plan.unsupported, plan: p.plan };
@@ -440,7 +462,7 @@ export async function shapeWhim({ world, spot, whim, model, onEvent = () => {}, 
 
   const agent = new Agent({
     initialState: { systemPrompt: LANGUAGE, model, tools },
-    getApiKey: async () => "local",
+    getApiKey: async () => apiKey || "local",
     toolExecution: "sequential",
     beforeToolCall: async ({ toolCall }) => {
       toolCalls++;
@@ -462,7 +484,7 @@ export async function shapeWhim({ world, spot, whim, model, onEvent = () => {}, 
   agent.subscribe((e) => {
     if (e.type === "tool_execution_start") {
       const a = e.args || {};
-      const label = e.toolName === "look" ? `looked at ${describeLoose(a.area)}` : e.toolName === "read_skein" ? `read skein ${a.id}`
+      const label = e.toolName === "look" ? `looked at ${describeLoose(unstring(a.area))}` : e.toolName === "read_skein" ? `read skein ${a.id}`
         : e.toolName === "try_plan" ? `tried "${(a.plan && a.plan.name) || "a plan"}"` : e.toolName === "commit" ? `committing "${(a.plan && a.plan.name) || "the plan"}"`
         : e.toolName === "propose" ? `proposing "${(a.plan && a.plan.name) || "a plan"}"` : e.toolName === "decline" ? "declining" : e.toolName;
       emit({ kind: "tool", tool: e.toolName, label });
@@ -488,14 +510,16 @@ export async function shapeWhim({ world, spot, whim, model, onEvent = () => {}, 
   }
   const lastText = [...agent.state.messages].reverse().find((m) => m.role === "assistant");
   const reply = lastText ? (lastText.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ").trim() : "";
-  const error = agent.state.errorMessage || null;
+  // A server's error text could quote the key back (in errorMessage and in the transcript); scrub it here.
+  const scrub = (v) => (apiKey && v != null ? JSON.parse(JSON.stringify(v).split(apiKey).join("[key]")) : v);
+  const error = scrub(agent.state.errorMessage || null);
   if (error) emit({ kind: "error", message: String(error).slice(0, 300) });
   const outcome = finished ? finished.outcome : reply && !error ? "answered" : "failed";
   const plan = finished ? finished.clean : null;
   return {
     outcome, committed: outcome === "committed", plan, problems: finished ? finished.problems : [],
     unsupported: finished ? finished.unsupported : [], explain: plan ? WF.explainPlan(plan, copy) : [],
-    say: finished ? finished.say || reply : reply, error, events, messages: agent.state.messages,
+    say: finished ? finished.say || reply : reply, error, events, messages: scrub(agent.state.messages),
     seconds: (Date.now() - started) / 1000, toolCalls,
   };
 }
