@@ -11,8 +11,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as WF from "../game/world.js";
-import * as Model from "../server/model.js";
-import { shapeWhim, localModel } from "../server/shaper.js";
+import * as Model from "../server/model-server/index.js";
+import { shapeWhim } from "../server/shaper.js";
 import { checkClaims } from "../server/claims.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -210,7 +210,7 @@ for (const c of suite.cases) {
       }
       caseBase = WF.save(w);
     }
-    const result = await shapeWhim({ world: WF.load(caseBase), spot: c.spot, whim: c.whim, model: localModel(config), apiKey: config.apiKey });
+    const result = await shapeWhim({ world: WF.load(caseBase), spot: c.spot, whim: c.whim, model: Model.localModel(config), apiKey: config.apiKey });
     const without = WF.load(caseBase), withPlan = WF.load(caseBase);
     const knownMaterials = withPlan.materials.length;
     let plan = null, skein = null;

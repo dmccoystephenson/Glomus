@@ -153,7 +153,7 @@ the player selects and clicks with).
   carried over from the last preview, a second confirming commit before `switch_off`, and preview lines that
   say when no thread ever stops. The `LANGUAGE` prompt is the thread language's reference.
 - `server/server.js`: local HTTP server, whim jobs the page polls, and a replayable case per whim in
-  `workspace/whims/`. `server/model.js` finds or launches the model server.
+  `workspace/whims/`. `server/model-server/` finds or launches the model server (ports and adapters; see the README).
 - `game/index.html`: map rendering (shallow water faint, flow glints), spot picking, the whim queue with live
   steps, skein cards (switch off, erase, show plan), rewind, rain and speed controls.
 - `tools/eval.js` + `evals/cases.json`: whims on seed 7, applied and simulated 30 s next to a copy without the

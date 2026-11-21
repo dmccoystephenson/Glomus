@@ -1,10 +1,10 @@
-// How config/model.json, config/model.local.json and the environment combine (server/model.js), with no model
+// How config/model.json, config/model.local.json and the environment combine (server/model-server), with no model
 // involved. Run: node game/tools/model_config_test.js
 import assert from "node:assert";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadConfig } from "../../server/model.js";
+import { loadConfig } from "../../server/model-server/index.js";
 
 let passed = 0;
 function test(name, fn) {

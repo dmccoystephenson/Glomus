@@ -213,7 +213,8 @@ no whim runs longer than 10 minutes in all. `npm run eval` shows the waiting tim
   review are in `docs/POWERS.md` and `docs/POWERS_REVIEW.md`.
 - `server/server.js`: the local server. Every whim is saved as a replayable case in `workspace/whims/`: the
   world it started from, the full transcript, each tool call and the result.
-- `server/model.js`: finds or starts the model server.
+- `server/model-server/`: finds or starts the model server, says whether it's ready, and streams the model's
+  replies. It is split into ports and adapters; see [The model server's layers](#the-model-servers-layers).
 - `server/worlds.js`: world slots on disk; `game/slots.js` is their dialog on the page.
 - `game/walk3d.js`: walking the 3D view. It reads the ground to stand on and moves the camera, and never changes
   the world.
@@ -226,6 +227,46 @@ no whim runs longer than 10 minutes in all. `npm run eval` shows the waiting tim
   gives the same bytes. Strata is MIT (`game/3d/STRATA-LICENSE`, `STRATA-THIRD-PARTY-NOTICES.md`). The
   engine loads only when the view is first opened.
 
+### The model server's layers
+
+Everything that talks to the model server goes through four small interfaces (ports), each in its own file
+in `server/model-server/ports/`. Each has one production adapter in `server/model-server/adapters/`, and the
+tests have a fake for each (`game/tools/model_fakes.js`), so the model server, its status messages and whole
+whims are tested with no model and no real waiting.
+
+```
+server.js, tools/eval.js, shaper.js (shapeWhim)
+        |
+        v
+service.js    loadConfig; createModelServer() wires the production adapters by default
+        |
+        v
+core.js       what the server's answers and the launcher's state mean (pure)      model.js  values
+        |
+        v
+ports/        ModelEndpoint   ModelLauncher   ReplyStream   Clock
+        ^
+        |
+adapters/     OpenAiCompatEndpoint   LlamaServerLauncher   PiReplyStream   SystemClock
+```
+
+| Port | Question it answers | Production adapter | Test fake |
+|---|---|---|---|
+| `ModelEndpoint` | What does the model server say about itself (`/models`, `/health`, `/slots`)? | `OpenAiCompatEndpoint` (HTTP) | `FakeEndpoint` |
+| `ModelLauncher` | Start and stop a local server | `LlamaServerLauncher` (llama.cpp's `llama-server`) | `FakeLauncher` |
+| `ReplyStream` | Stream one model reply | `PiReplyStream` (pi-ai's `streamSimple`) | `ScriptedReplies` (scripted tool calls) |
+| `Clock` | What time is it; wake me later (retries, stalls, the work budget) | `SystemClock` | `FakeClock` |
+
+`model.js`, `core.js` and `ports/` never import `adapters/` or `service.js`, and each port and adapter file
+holds one class; `game/tools/model_layers_test.js` checks both. The honesty checks stay in `server/claims.js`
+and the Pi agent loop stays in `shapeWhim`: only its reply stream and clock are passed in (`shapeWhim({...,
+replies, clock})`), defaulting to the production ones.
+
+**To add a model backend**, write one adapter file in `server/model-server/adapters/` that extends the port
+it implements (say `ollama-launcher.js`, extending `ModelLauncher`), and add one entry for it to the registry
+in `adapters/index.js`. Pick it with `createModelServer({ launcher: "ollama" })`, or make it the default in
+`DEFAULTS` there.
+
 A plan is data, not code: it can only name areas, materials, conditions and actions the game knows, with
 bounded amounts, so nothing a model writes reaches beyond the map. Every skein can be switched off, erased
 or rewound.
@@ -233,7 +274,7 @@ or rewound.
 ## Tests and evals
 
 ```powershell
-npm test                                    # the world, tools, undo, animals, honesty checks and world slots (no model)
+npm test                                    # the world, tools, undo, animals, honesty checks, the model server on fakes, scripted whims and world slots (no model)
 npm run test:3d                             # the 3D view in headless Chromium: taps, tools, strokes, hover, rain, phone touch
 npm run eval                                # every eval case through the real model
 npm run eval -- --only floodgate --repeat 3

@@ -2,10 +2,11 @@
 // It can look closely, read other skeins, preview a plan by simulating it, and finally commit it.
 // The model only proposes; the game validates every plan (checkPlan) before anything runs.
 import { Agent } from "@mariozechner/pi-agent-core";
-import { createAssistantMessageEventStream, streamSimple } from "@mariozechner/pi-ai";
+import { createAssistantMessageEventStream } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import * as WF from "../game/world.js";
 import { CAPS, admissions, checkClaims, requestNeeds, routeOutcome } from "./claims.js";
+import { clock as systemClock, replyStream } from "./model-server/index.js";
 
 export const MAX_TOOL_CALLS = 8;
 export const PREVIEW_SECONDS = 20;
@@ -229,10 +230,11 @@ export function droppedReply(message) {
  * A reply that stalls is cut and counts as dropped: no first token within firstTokenMs (a shared server may be
  * queueing it, so this is generous), or nothing more for stallMs once it has started. onWait(true) is called
  * when a request goes out and onWait(false) when its first token arrives (or it ends), so a caller can tell
- * time spent waiting for the server from time the model spends working.
+ * time spent waiting for the server from time the model spends working. clock (a Clock) times the stalls and
+ * the pauses between attempts.
  */
 export function retryingStream(inner, { retries = 2, waitMs = [3000, 10000], firstTokenMs = 150_000, stallMs = 60_000,
-  onRetry = () => {}, onWait = () => {} } = {}) {
+  onRetry = () => {}, onWait = () => {}, clock = systemClock } = {}) {
   const pause = (k) => (Array.isArray(waitMs) ? waitMs[Math.min(k, waitMs.length - 1)] : waitMs);
   return (model, context, options = {}) => {
     const out = createAssistantMessageEventStream();
@@ -243,7 +245,7 @@ export function retryingStream(inner, { retries = 2, waitMs = [3000, 10000], fir
         const ac = new AbortController();
         const stopOnOuter = () => ac.abort();
         if (outer) outer.addEventListener("abort", stopOnOuter);
-        const arm = (ms, why) => { clearTimeout(timer); timer = setTimeout(() => { stalled = why; ac.abort(); }, ms); };
+        const arm = (ms, why) => { if (timer) timer.cancel(); timer = clock.after(ms, () => { stalled = why; ac.abort(); }); };
         const started = () => { if (waiting) { waiting = false; onWait(false); } };
         onWait(true);
         arm(firstTokenMs, `timed out: no reply from the model server for ${Math.round(firstTokenMs / 1000)} s`);
@@ -255,16 +257,16 @@ export function retryingStream(inner, { retries = 2, waitMs = [3000, 10000], fir
           }
           if (!final) final = await s.result();
         } catch (e) {
-          final = { role: "assistant", content: [], stopReason: "error", errorMessage: String((e && e.message) || e), timestamp: Date.now() };
+          final = { role: "assistant", content: [], stopReason: "error", errorMessage: String((e && e.message) || e), timestamp: clock.now() };
         } finally {
-          clearTimeout(timer); started();
+          if (timer) timer.cancel(); started();
           if (outer) outer.removeEventListener("abort", stopOnOuter);
         }
         if (outer && outer.aborted) final = { ...final, stopReason: "aborted", errorMessage: final.errorMessage || "Request was aborted." };
         else if (stalled) { kind = "error"; final = { ...final, stopReason: "error", errorMessage: stalled }; }
         if (kind === "error" && attempt < retries && !(outer && outer.aborted) && droppedReply(final)) {
           onRetry(final.errorMessage, attempt + 1);
-          await new Promise((r) => setTimeout(r, pause(attempt)));
+          await new Promise((r) => clock.after(pause(attempt), r));
           if (!(outer && outer.aborted)) continue;
         }
         out.push(kind === "done" ? { type: "done", reason: final.stopReason, message: final } : { type: "error", reason: final.stopReason, error: final });
@@ -313,17 +315,6 @@ export function sameNameTools(world, clean) {
     }
   }
   return out;
-}
-
-export function localModel(config) {
-  return {
-    id: config.alias, name: config.alias, api: "openai-completions", provider: "local",
-    baseUrl: config.baseUrl, reasoning: false, input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: config.contextWindow || 32768, maxTokens: config.maxTokens || 3000,
-    compat: { supportsDeveloperRole: false, supportsReasoningEffort: false, supportsStore: false,
-      supportsStrictMode: false, maxTokensField: "max_tokens" },
-  };
 }
 
 const text = (t, details = {}) => ({ content: [{ type: "text", text: t }], details });
@@ -484,13 +475,14 @@ function checked(world, plan, spot) {
 
 /**
  * Run the shaper on a whim. world is a world object (a private copy is used), spot may be null. apiKey, if the
- * model server needs one, is sent only as its Authorization header.
+ * model server needs one, is sent only as its Authorization header. replies (a ReplyStream) streams the model's
+ * replies and clock (a Clock) times them; both default to the production ones (server/model-server).
  * onEvent receives {kind, ...} progress events. Returns {outcome, committed, plan, unsupported, explain, say, events, messages, seconds, toolCalls}.
  */
-export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent = () => {}, signal }) {
+export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent = () => {}, signal, replies = replyStream, clock = systemClock }) {
   const copy = WF.load(WF.save(world));
   const events = [];
-  const emit = (e) => { const ev = { at: Date.now(), ...e }; events.push(ev); onEvent(ev); };
+  const emit = (e) => { const ev = { at: clock.now(), ...e }; events.push(ev); onEvent(ev); };
   let pushedBackDecline = false, pushedBackPropose = false, pushedBackSameName = false, finished = null, toolCalls = 0, confirmedOff = "", lastTried = null, lastCall = "", repeats = 0;
 
   // commit and propose share every check. The outcome is decided by routeOutcome from the player's request,
@@ -551,8 +543,8 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
       return { ...text(c.head + "\n" + tail), terminate: true };
     },
   });
-  const started = Date.now();
-  const clock = workClock(started);
+  const started = clock.now();
+  const work = workClock(started, { now: () => clock.now() });
 
   const tools = [
     {
@@ -616,7 +608,8 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
     initialState: { systemPrompt: LANGUAGE, model, tools },
     getApiKey: async () => apiKey || "local",
     // A dropped or timed-out reply is asked for once more instead of ending the whim.
-    streamFn: retryingStream(streamSimple, { onRetry: (why) => emit({ kind: "retry", message: String(why).slice(0, 120) }), onWait: clock.wait }),
+    streamFn: retryingStream((m, context, options) => replies.stream(m, context, options),
+      { onRetry: (why) => emit({ kind: "retry", message: String(why).slice(0, 120) }), onWait: work.wait, clock }),
     toolExecution: "sequential",
     beforeToolCall: async ({ toolCall }) => {
       toolCalls++;
@@ -653,7 +646,7 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
     }
   });
   let outOfTime = "";
-  const timer = setInterval(() => { const why = !outOfTime && clock.over(); if (why) { outOfTime = why; agent.abort(); } }, 500);
+  const timer = setInterval(() => { const why = !outOfTime && work.over(); if (why) { outOfTime = why; agent.abort(); } }, 500);
   const onAbort = () => agent.abort();
   if (signal) signal.addEventListener("abort", onAbort);
   emit({ kind: "start", whim });
@@ -675,7 +668,7 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
     outcome, committed: outcome === "committed", plan, problems: finished ? finished.problems : [],
     unsupported: finished ? finished.unsupported : [], explain: plan ? WF.explainPlan(plan, copy) : [],
     say: finished ? finished.say || reply : reply, error, events, messages: scrub(agent.state.messages),
-    seconds: (Date.now() - started) / 1000, waitSeconds: Math.round(clock.waited() / 100) / 10, toolCalls,
+    seconds: (clock.now() - started) / 1000, waitSeconds: Math.round(work.waited() / 100) / 10, toolCalls,
   };
 }
 
