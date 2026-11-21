@@ -1,0 +1,651 @@
+{
+  "out": ".",
+  "vars": {
+    "base": "http://127.0.0.1:{port}/?seed=7",
+    "port": "8840",
+    "stage": "#model { visibility: hidden; } header, aside, .hover, .timebar, .palette { display: none !important; } main { display: block; min-height: 0; } .mapcol { padding: 0; }"
+  },
+  "devices": {
+    "wide": {
+      "width": 1280,
+      "height": 760
+    },
+    "mid": {
+      "width": 1040,
+      "height": 700
+    },
+    "stage": {
+      "width": 760,
+      "height": 560
+    }
+  },
+  "defaults": {
+    "url": "{base}",
+    "device": "wide",
+    "ready": "window.__glomusWorld && window.__shoot && document.querySelector('#map')",
+    "initScript": {
+      "file": "capture.js"
+    },
+    "clock": {
+      "mode": "paced",
+      "step": 0.25
+    },
+    "css": "#model { visibility: hidden; }",
+    "timeout": 5400,
+    "screenshotTimeout": 600000,
+    "retries": 1
+  },
+  "shots": [
+    {
+      "name": "hero",
+      "kind": "clip",
+      "gif": {
+        "width": 640,
+        "hold_last_ms": 800
+      },
+      "device": "stage",
+      "css": "{stage}",
+      "crop": {
+        "of": "#map3d",
+        "pad": 0
+      },
+      "fps": 8,
+      "caption": "A whim's stream and glowing moss, seen in 3D as the view turns.",
+      "alt": "Animation: the camera circles a 3D landscape of snowy peaks, a lake, a stream and glowing green banks under a low sun",
+      "steps": [
+        {
+          "js": "await __shoot.rich(); __shoot.sun('day')"
+        },
+        {
+          "click": "#view3d"
+        },
+        {
+          "until": "window.__glomus3d && window.__glomus3d()",
+          "steps": [
+            {
+              "frames": 1
+            }
+          ],
+          "max": 200
+        },
+        {
+          "js": "__shoot.cam({ at: [50, 32], yaw: 1.05, pitch: 0.66, dist: 92 })"
+        },
+        {
+          "frames": 2
+        },
+        {
+          "repeat": 28,
+          "steps": [
+            {
+              "js": "__strataKit.cam.yaw += 0.035"
+            },
+            {
+              "frames": 1
+            },
+            {
+              "capture": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "map",
+      "kind": "still",
+      "caption": "The map: the spring in the snowy north, the lake below it, and Mossback (the yellow dot) on the slope.",
+      "alt": "Glomus in the browser: a top-down map of snow, soil, meadow and water, with the tools, the whim box and the animals beside it",
+      "steps": [
+        {
+          "js": "await __shoot.advance(1200)"
+        },
+        {
+          "frames": 4
+        }
+      ]
+    },
+    {
+      "name": "whim",
+      "kind": "still",
+      "caption": "After: the skein's card leads with What it does, and the new stream runs down into the pool.",
+      "alt": "The map after the whim: a new blue stream runs from the dashed spot down the slope into the pool, and the skein's card describes what it does",
+      "steps": [
+        {
+          "js": "await __shoot.advance(1200); __shoot.size(2)"
+        },
+        {
+          "click": {
+            "at": [
+              0.8177,
+              0.2891
+            ],
+            "of": "#map"
+          }
+        },
+        {
+          "click": "#whim"
+        },
+        {
+          "type": "Carve a stream from here into the lake"
+        },
+        {
+          "frames": 3
+        },
+        {
+          "capture": "whim-ask"
+        },
+        {
+          "js": "__shoot.plan('stream', 'Carve a stream from here into the lake')"
+        },
+        {
+          "repeat": 8,
+          "steps": [
+            {
+              "js": "await __shoot.advance(40)"
+            },
+            {
+              "frames": 1
+            }
+          ]
+        },
+        {
+          "js": "document.querySelector('#skeins .card:last-child').scrollIntoView({ block: 'center' })"
+        },
+        {
+          "frames": 3
+        },
+        {
+          "capture": "whim-after"
+        }
+      ]
+    },
+    {
+      "name": "floodgate",
+      "kind": "clip",
+      "gif": {
+        "width": 640,
+        "hold_last_ms": 800
+      },
+      "fps": 10,
+      "crop": [
+        470,
+        120,
+        440,
+        400
+      ],
+      "caption": "A floodgate that bursts every 30 seconds: for ten seconds in each thirty its thread pours water down the stream.",
+      "alt": "Animation: on the map, a surge of bright blue water runs down a stream into a pool, fades, and comes again",
+      "steps": [
+        {
+          "js": "await __shoot.advance(1200); __shoot.plan('stream', 'Carve a stream from here into the lake'); await __shoot.advance(200); __shoot.plan('floodgate', 'A floodgate here that bursts every 30 seconds')"
+        },
+        {
+          "click": "#speed"
+        },
+        {
+          "click": "#speed"
+        },
+        {
+          "frames": 2
+        },
+        {
+          "repeat": 44,
+          "steps": [
+            {
+              "frames": 1
+            },
+            {
+              "capture": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "tools",
+      "kind": "clip",
+      "gif": {
+        "width": 640,
+        "hold_last_ms": 800
+      },
+      "device": "mid",
+      "fps": 8,
+      "crop": [
+        0,
+        46,
+        1040,
+        560
+      ],
+      "caption": "Tools from a whim: a rain cloud clicked onto the slope (its ring stays while it acts), then a channel dragged across it.",
+      "alt": "Animation: a Rain cloud tool is picked and clicked on the map, a ring appears and water spreads; then a Channel tool is dragged, digging a line across the slope",
+      "steps": [
+        {
+          "js": "await __shoot.advance(1200); __shoot.plan('tools', 'Give me a rain cloud, a hill tool and a channel I can drag')"
+        },
+        {
+          "frames": 2
+        },
+        {
+          "js": "__shoot.pick('Rain cloud')"
+        },
+        {
+          "frames": 2
+        },
+        {
+          "capture": true
+        },
+        {
+          "capture": true
+        },
+        {
+          "mouse": "move",
+          "at": {
+            "at": [
+              0.76,
+              0.32
+            ],
+            "of": "#map"
+          },
+          "steps": 4
+        },
+        {
+          "frames": 1
+        },
+        {
+          "capture": true
+        },
+        {
+          "click": {
+            "at": [
+              0.76,
+              0.32
+            ],
+            "of": "#map"
+          }
+        },
+        {
+          "repeat": 16,
+          "steps": [
+            {
+              "frames": 1
+            },
+            {
+              "capture": true
+            }
+          ]
+        },
+        {
+          "js": "__shoot.pick('Channel')"
+        },
+        {
+          "frames": 1
+        },
+        {
+          "capture": true
+        },
+        {
+          "mouse": "down",
+          "at": {
+            "at": [
+              0.55,
+              0.62
+            ],
+            "of": "#map"
+          }
+        },
+        {
+          "repeat": 14,
+          "steps": [
+            {
+              "mouse": "move",
+              "by": [
+                12,
+                -7
+              ],
+              "steps": 2
+            },
+            {
+              "frames": 1
+            },
+            {
+              "capture": true
+            }
+          ]
+        },
+        {
+          "mouse": "up"
+        },
+        {
+          "repeat": 8,
+          "steps": [
+            {
+              "frames": 1
+            },
+            {
+              "capture": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "animals",
+      "kind": "still",
+      "caption": "Mossback and four sand lizards from a whim, with their water, food and what each is doing.",
+      "alt": "The map with small coloured animals near a pool, and the Animals panel listing Mossback the grazer and four sand lizards with water and food bars",
+      "steps": [
+        {
+          "js": "await __shoot.rich()"
+        },
+        {
+          "frames": 3
+        },
+        {
+          "js": "document.getElementById('animals').scrollIntoView({ block: 'start' })"
+        },
+        {
+          "frames": 2
+        }
+      ]
+    },
+    {
+      "name": "animals-3d",
+      "kind": "still",
+      "device": "stage",
+      "css": "{stage}",
+      "crop": {
+        "of": "#map3d",
+        "pad": 0
+      },
+      "caption": "Up close in 3D: sand lizards in their orange and ring pattern by the pool.",
+      "alt": "A close 3D view of small orange animals with ringed backs on pale sand beside blue water",
+      "steps": [
+        {
+          "js": "await __shoot.rich(); __shoot.sun('day')"
+        },
+        {
+          "click": "#view3d"
+        },
+        {
+          "until": "window.__glomus3d && window.__glomus3d()",
+          "steps": [
+            {
+              "frames": 1
+            }
+          ],
+          "max": 200
+        },
+        {
+          "js": "const l = __shoot.world().creatures.filter((c) => !c.dead && c.species !== 'grazer'); const x = l.reduce((s, c) => s + c.x, 0) / l.length, y = l.reduce((s, c) => s + c.y, 0) / l.length; __shoot.cam({ at: [x, y], yaw: 1.3, pitch: 0.55, dist: 16 })"
+        },
+        {
+          "frames": 3
+        }
+      ]
+    },
+    {
+      "name": "day",
+      "kind": "still",
+      "device": "stage",
+      "css": "{stage}",
+      "crop": {
+        "of": "#map3d",
+        "pad": 0
+      },
+      "caption": "Day.",
+      "alt": "The landscape in 3D under a clear afternoon sun",
+      "steps": [
+        {
+          "js": "await __shoot.rich(); __shoot.sun('day')"
+        },
+        {
+          "click": "#view3d"
+        },
+        {
+          "until": "window.__glomus3d && window.__glomus3d()",
+          "steps": [
+            {
+              "frames": 1
+            }
+          ],
+          "max": 200
+        },
+        {
+          "js": "__shoot.cam({ at: [52, 30], yaw: 1.75, pitch: 0.7, dist: 92 })"
+        },
+        {
+          "frames": 3
+        }
+      ]
+    },
+    {
+      "name": "night",
+      "kind": "still",
+      "device": "stage",
+      "css": "{stage}",
+      "crop": {
+        "of": "#map3d",
+        "pad": 0
+      },
+      "caption": "Night: moonlight, stars, and the glowing moss lighting the banks.",
+      "alt": "The same landscape at night: dark blue land under stars, with the moss along the water glowing green",
+      "steps": [
+        {
+          "js": "await __shoot.rich(); await __shoot.advance(1000); __shoot.world().weather.raining = false; __shoot.sun('clock')"
+        },
+        {
+          "click": "#view3d"
+        },
+        {
+          "until": "window.__glomus3d && window.__glomus3d()",
+          "steps": [
+            {
+              "frames": 1
+            }
+          ],
+          "max": 200
+        },
+        {
+          "js": "__shoot.cam({ at: [52, 30], yaw: 1.75, pitch: 0.7, dist: 92 })"
+        },
+        {
+          "frames": 3
+        }
+      ]
+    },
+    {
+      "name": "daynight",
+      "kind": "clip",
+      "gif": {
+        "width": 640,
+        "hold_last_ms": 800
+      },
+      "device": "stage",
+      "css": "{stage}",
+      "fps": 8,
+      "crop": {
+        "of": "#map3d",
+        "pad": 0
+      },
+      "caption": "The world's own clock from late afternoon to night (sped up).",
+      "alt": "Animation, sped up: the sun sets over the 3D landscape, the light turns warm then blue, and the glowing moss comes up as night falls",
+      "steps": [
+        {
+          "js": "await __shoot.rich(); await __shoot.advance(150); __shoot.sun('clock')"
+        },
+        {
+          "click": "#view3d"
+        },
+        {
+          "until": "window.__glomus3d && window.__glomus3d()",
+          "steps": [
+            {
+              "frames": 1
+            }
+          ],
+          "max": 200
+        },
+        {
+          "js": "__shoot.cam({ at: [52, 30], yaw: 1.75, pitch: 0.7, dist: 92 })"
+        },
+        {
+          "frames": 2
+        },
+        {
+          "repeat": 26,
+          "steps": [
+            {
+              "js": "await __shoot.advance(32); __shoot.world().weather.raining = false"
+            },
+            {
+              "frames": 1
+            },
+            {
+              "capture": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "walk",
+      "kind": "clip",
+      "gif": {
+        "width": 640,
+        "hold_last_ms": 800
+      },
+      "device": "stage",
+      "css": "{stage}",
+      "fps": 8,
+      "crop": {
+        "of": "#map3d",
+        "pad": 0
+      },
+      "caption": "Walk: the visitor heads down the bank beside the stream.",
+      "alt": "Animation: a small figure seen from behind walks across a 3D meadow beside a stream",
+      "steps": [
+        {
+          "js": "await __shoot.rich(); __shoot.sun('day')"
+        },
+        {
+          "click": {
+            "at": [
+              0.75,
+              0.3
+            ],
+            "of": "#map"
+          }
+        },
+        {
+          "click": "#walk"
+        },
+        {
+          "until": "window.__glomusWalker && window.__glomusWalker().on",
+          "steps": [
+            {
+              "frames": 1
+            }
+          ],
+          "max": 200
+        },
+        {
+          "frames": 3
+        },
+        {
+          "key": "KeyW",
+          "action": "down"
+        },
+        {
+          "repeat": 26,
+          "steps": [
+            {
+              "frames": 1
+            },
+            {
+              "capture": true
+            }
+          ]
+        },
+        {
+          "key": "KeyW",
+          "action": "up"
+        }
+      ]
+    },
+    {
+      "name": "slots",
+      "kind": "still",
+      "crop": {
+        "of": "#slots",
+        "pad": 16
+      },
+      "caption": "World slots: save this world under a name, or open one the server keeps.",
+      "alt": "The World slots dialog: a name box with Save to slot, and two saved slots listed with their world time and who saved them",
+      "steps": [
+        {
+          "js": "await __shoot.rich()"
+        },
+        {
+          "click": "#worlds"
+        },
+        {
+          "click": "[data-slot-name]"
+        },
+        {
+          "type": "valley"
+        },
+        {
+          "click": "[data-slot-save]"
+        },
+        {
+          "until": "document.querySelectorAll('[data-slot-list] li').length >= 1",
+          "steps": [
+            {
+              "frames": 1
+            }
+          ],
+          "max": 40
+        },
+        {
+          "click": "[data-slot-name]"
+        },
+        {
+          "js": "document.querySelector('[data-slot-name]').value = ''"
+        },
+        {
+          "type": "lizard-pool"
+        },
+        {
+          "click": "[data-slot-save]"
+        },
+        {
+          "until": "document.querySelectorAll('[data-slot-list] li').length >= 2",
+          "steps": [
+            {
+              "frames": 1
+            }
+          ],
+          "max": 40
+        },
+        {
+          "frames": 2
+        }
+      ]
+    },
+    {
+      "name": "phone",
+      "kind": "still",
+      "device": "phone",
+      "caption": "At phone width.",
+      "alt": "Glomus on a phone: the header buttons, the map with its stream and glowing moss, and the tools below",
+      "steps": [
+        {
+          "js": "await __shoot.rich()"
+        },
+        {
+          "frames": 4
+        }
+      ]
+    }
+  ]
+}

@@ -2,6 +2,8 @@
 
 *Upward, not northward.*
 
+![A landscape in 3D: snowy peaks, a spring and its stream with glowing moss along the banks, sand lizards on the warm sand, as the view slowly turns](docs/media/hero.gif)
+
 A living landscape, seen from above, that a local model reshapes and reprograms on your whims.
 
 Point at a spot and say what you want: *carve a stream from here into the lake*, *make the stones here
@@ -23,10 +25,18 @@ above them.
 Double-click **Play Glomus.vbs**, or run `npm start`. It serves the game at http://127.0.0.1:8840/ and starts
 the local model if nothing answers at the configured address.
 
+![Glomus in the browser: a top-down map of snow, soil, meadow and water, with the tools, the whim box, its ideas and the animals beside it](docs/media/map.jpg)
+
 - **Click** the map to choose a spot. The model calls it "here". Size it with **◀ ▶** in the palette above the
   map, or with **[** and **]**.
 - **Ask the world** (Ctrl+Enter) queues a whim. While the model works, its spot shows a moving dashed ring,
   and its card lists each step: what it looked at, what its preview showed, and when it finished.
+
+| Ask | After |
+| --- | --- |
+| ![A spot picked on the slope and the whim "Carve a stream from here into the lake" typed in the whim box](docs/media/whim-ask.jpg) | ![The same map after the whim: a new channel runs from the spot down into the pool, and the skein's card says what it does](docs/media/whim-after.jpg) |
+
+*A whim from asking to done: the spot and the words, then the new channel and its skein's card.*
 - **The world can say no.** When a whim asks for something Glomus doesn't have, such as a double-click, a key,
   days of time or creatures, the card says *Can't do* and offers the closest thing it can make, with
   **Apply** and **No thanks**. Nothing is applied until you choose. Sometimes it just explains why it can't.
@@ -35,6 +45,10 @@ the local model if nothing answers at the configured address.
   - *Switch off* pauses a skein's threads and tools.
   - *Erase* stops them and takes back what they did to the ground, leaving later whims' changes alone.
     It doesn't replay the world; *Rewind* does that.
+
+![Animation: on the map, a surge of bright blue water runs down a stream into a pool, fades, and comes again](docs/media/floodgate.gif)
+
+*A floodgate that bursts every 30 seconds: a thread that keeps running in the world.*
 - **Rewind** goes back up to three minutes. **Rain**, **Pause** (Space) and **speed** are in the header.
 - *Write a plan by hand* applies a plan in the same JSON the model writes.
 - **Slots** (header) saves this world to a named slot the local server keeps, or opens one. See
@@ -60,11 +74,17 @@ and the slot's current details, so two writers can't overwrite each other unawar
 again. The world a write replaces is kept in `workspace/worlds/previous/<name>.json`, and opening a slot on the
 page keeps the world it replaces, with **Put back the world you had**. Nothing deletes a slot.
 
+<img src="docs/media/slots.jpg" width="460" alt="The World slots dialog: a name box with Save to slot, and two saved worlds, lizard-pool and valley, each with Open">
+
 ### Tools
 
 Ask for a tool and it appears in **Your tools**, in the palette above the map. Examples: *a tool that raises a
 hill where I click*, *a rain cloud I can drop anywhere*, *a tool that digs a channel where I drag*. The 🛠
 ideas under the whim box are tool ideas.
+
+![Animation: a rain cloud tool clicked onto the slope rains there with a ring around it, then a channel tool is dragged across the map and digs its line](docs/media/tools.gif)
+
+*Tools from whims: a rain cloud clicked onto the slope, then a channel dragged across it.*
 
 - Pick a tool, or press its number key **1–9**, then **click** the map to use it. A tool marked ⤳ is a drag
   tool: **drag** across the map instead. **Escape** goes back to choosing spots.
@@ -90,6 +110,8 @@ Every new world starts with **Mossback**, a grazer. It lives on its own:
 
 You can't steer it. You can only change the land around it.
 
+![The map with Mossback and four sand lizards, and the Animals panel listing each one's water, food, what it is doing and how well it thrives](docs/media/animals.jpg)
+
 - The **Animals** panel shows each animal's water and food, what it's doing, and two scores. Thriving % rewards
   a heavy hand; seconds thriving per whim rewards a light touch. Hover a row to find the animal on the map, or
   hover the animal itself.
@@ -99,6 +121,10 @@ You can't steer it. You can only change the land around it.
 - **Legend** (under Animals) lists every kind of ground and every species, with counts.
 - Animals can't fly, swim, breed, form herds or hunt yet. Whims that ask for those come back as proposals. See
   `docs/CREATURES.md`.
+
+<img src="docs/media/animals-3d.jpg" width="560" alt="In 3D, close up: two orange sand lizards with legs and shadows on the sand beside a stream">
+
+*Sand lizards from a whim, in 3D.*
 
 ### In 3D
 
@@ -123,14 +149,26 @@ between them. Water is clearer in the shallows and darker in pools, glints in th
 it runs fast. Animals have bodies (Mossback wears moss on its back), face where they're going and put their
 heads down to eat and drink. Ground whose material glows (a whim's "glowing moss", say) lights up the night.
 
+| Day | Night |
+| --- | --- |
+| ![The 3D view by day: snow, soil, sand, clear water and bright green moss along the stream](docs/media/day.jpg) | ![The same view at night: dark land under a blue sky, with the glowing moss lighting the banks](docs/media/night.jpg) |
+
+![Animation: dusk turns to night over the 3D landscape and the glowing moss brightens along the streams](docs/media/daynight.gif)
+
 **Walk** (or **B**) puts you on the land as a visitor, seen from behind. **W A S D** or the arrows walk, **Q**
 and **E** turn, **Shift** hurries, and dragging still turns the view. **C** switches to seeing through the
 visitor's eyes and back. **R** puts the spot where you stand, or uses the picked tool there. You follow the
 ground, wade slowly through shallow water, and are stopped by deep water and cliffs. On a phone a stick and two
 buttons appear. The visitor is only a way of looking: the world and its animals don't know you're there.
 
+![Animation: the visitor in a red coat walks up from the stream onto the rocky slopes, the camera following from behind](docs/media/walk.gif)
+
 **Map** goes back to the flat view. http://127.0.0.1:8840/3d shows your saved world full-window and keeps it
 living. That page only watches, so nothing there is saved.
+
+<img src="docs/media/phone.jpg" width="280" alt="Glomus at phone width: the header buttons wrap, the map fills the width, and the tools and whim box follow below">
+
+*At phone width.*
 
 ## The model
 
@@ -221,6 +259,11 @@ npm run record-timelapse    # ten whims at 4× speed → demo/out/glomus-miniatu
 
 Both drive the installed Microsoft Edge through Playwright with a seeded world (`?seed=7`, which never
 touches your own saved world). The narrated cut speeds up the stretches where the model is working.
+
+The README's images are shot by [darkroom](https://github.com/Preponderous-Software/darkroom) from
+`docs/media/media.json`, with the server running: `darkroom shoot docs/media/media.json --var port=8840`.
+Their skeins are hand-written plans in the model's format (`docs/media/capture.js`), so the shots don't need a
+model.
 
 `npm run voice-over` narrates both videos with Kokoro's Sky voice (`af_sky`), locally on the CPU, from the
 lines and timings in `demo/voiceover.json`, and writes `demo/out/*-voiced.mp4`. The Kokoro model was copied
