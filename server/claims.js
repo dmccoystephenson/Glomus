@@ -127,7 +127,7 @@ function timesIn(clause, ending) {
     const before = clause.slice(Math.max(0, m.index - 24), m.index).toLowerCase();
     const after = clause.slice(m.index + m[0].length, m.index + m[0].length + 12).toLowerCase();
     let kind = null;
-    if (/\bevery\s*(?:other\s*)?$/.test(before)) kind = "recurrence";
+    if (/\bevery\s*(?:other\s*)?$/.test(before) || /^\s*(?:cycles?|intervals?|pulses?|periods?)\b/.test(after)) kind = "recurrence";
     // "stops after 30 seconds" names an ending: the effect lasts 30 s. Only a start is a delay.
     else if (ending && /\b(?:after|in|within|once)\s*(?:about|around|roughly)?\s*$/.test(before)) kind = "duration";
     else if (/\b(?:for|lasts?|lasting|runs? for|burns? for|rages? for)\s*(?:about|around|roughly|another|the next|just)?\s*$/.test(before) || /^\s*long\b/.test(after) || /\d-(?:second|minute)/.test(m[0])) kind = "duration";
@@ -205,14 +205,32 @@ export function checkClaims(say, plan, caps = CAPS, { namesMissing = false, prop
 
     const back = BACK.test(clause);
     const ending = !back && ENDING.test(clause);
-    for (const tm of timesIn(clause, ending)) {
+    const times = timesIn(clause, ending);
+    // "for 10 seconds every 30 seconds" is one claim: a 10-second window of a 30-second cycle, not a 10-second life.
+    // So is "a 10-second burst each cycle" when the plan's cycle is the one the thread has.
+    const every = times.filter((tm) => tm.kind === "recurrence").map((tm) => tm.n);
+    const eachCycle = /\b(?:each|every|per|a)\s+cycle\b/i.test(clause);
+    const window = (x, n) => { const c = cond(x.t, "cycle"); return !!c && (eachCycle || every.some((m) => near(c.cycle, m, 0.15, 2))) && near((c.to ?? c.cycle) - (c.from ?? 0), n, 0.15, 2); };
+    // Name the thread that breaks a claim and the condition list that would back it, so one call can fix it.
+    const fixWhen = (x, add) => `give thread "${x.t.name}" "when": ${JSON.stringify(x.t.when.filter((c) => !Object.keys(add).some((k) => k in c)).concat([add]))}`;
+    for (const tm of times) {
       if (tm.kind === "duration") {
         if (!scope.threads.length) fail(`something lasts ${tm.text}`, "nothing in the plan keeps acting, so nothing has a duration");
-        else if (!scope.threads.every((x) => cond(x.t, "within") && near(cond(x.t, "within").within, tm.n, 0.15, 2))) fail(`it lasts ${tm.text}`, `not every one of ${what} has {"within": ${tm.n}}`);
+        else {
+          const off = scope.threads.find((x) => !((cond(x.t, "within") && near(cond(x.t, "within").within, tm.n, 0.15, 2)) || window(x, tm.n)));
+          if (off) {
+            const add = every.length || eachCycle ? { cycle: every[0] || (cond(off.t, "cycle") || {}).cycle || 30, from: 0, to: tm.n } : { within: tm.n };
+            fail(`it lasts ${tm.text}`, `thread "${off.t.name}" doesn't stop after ${tm.text}${every.length || eachCycle ? " of each cycle" : ""}. Either ${fixWhen(off, add)}, or remove that thread, or say what it does instead`);
+          }
+        }
       } else if (tm.kind === "delay") {
         if (!scope.threads.some((x) => cond(x.t, "after") && near(cond(x.t, "after").after, tm.n, 0.15, 2))) fail(`it starts after ${tm.text}`, `none of ${what} has {"after": ${tm.n}}`);
       } else if (tm.kind === "recurrence") {
-        if (!scope.threads.some((x) => cond(x.t, "cycle") && near(cond(x.t, "cycle").cycle, tm.n, 0.15, 2))) fail(`it repeats every ${tm.text}`, `none of ${what} has {"cycle": ${tm.n}}`);
+        // A thread that ends (within) before its second cycle never repeats.
+        const repeats = (x) => cond(x.t, "cycle") && near(cond(x.t, "cycle").cycle, tm.n, 0.15, 2) && !(cond(x.t, "within") && cond(x.t, "within").within <= cond(x.t, "cycle").cycle);
+        if (!scope.threads.some(repeats)) fail(`it repeats every ${tm.text}`, scope.threads.some((x) => cond(x.t, "cycle") && cond(x.t, "within"))
+          ? `the threads with {"cycle": ${tm.n}} also have a within that ends them before the cycle comes round again; drop the within`
+          : `none of ${what} has {"cycle": ${tm.n}}`);
       }
     }
     for (const mt of metresIn(clause)) {

@@ -2,13 +2,17 @@
 // It can look closely, read other skeins, preview a plan by simulating it, and finally commit it.
 // The model only proposes; the game validates every plan (checkPlan) before anything runs.
 import { Agent } from "@mariozechner/pi-agent-core";
+import { createAssistantMessageEventStream, streamSimple } from "@mariozechner/pi-ai";
 import { Type } from "typebox";
 import * as WF from "../game/world.js";
 import { CAPS, admissions, checkClaims, requestNeeds, routeOutcome } from "./claims.js";
 
 export const MAX_TOOL_CALLS = 8;
 export const PREVIEW_SECONDS = 20;
+// The model gets 240 s of work per whim. Time spent waiting for a shared server to start a reply (its queue)
+// doesn't count against that, but no whim runs longer than WAIT_LIMIT_MS in all.
 const TIME_LIMIT_MS = 240_000;
+const WAIT_LIMIT_MS = 600_000;
 
 export const LANGUAGE = `You shape Glomus, a living landscape seen from above. The player points at a spot and tells you a
 whim; you make it real by committing a plan. You work with tools on a copy of the world:
@@ -143,7 +147,9 @@ Guidance:
 - In "say", describe only what your plan actually does. The game checks your say against the plan and refuses
   the commit if they disagree: a height the ground ends at ("sinks to 6 m") needs a lowering thread with
   {"height": [">", 6]} or a level edit; "for 30 seconds" or "stops after 30 seconds" needs {"within": 30} on
-  that thread; "after 10 seconds" (a later start) needs {"after": 10}; "every 30 seconds" needs a cycle; "stops",
+  that thread; "after 10 seconds" (a later start) needs {"after": 10}; "every 30 seconds" needs a cycle, and
+  "for 10 seconds every 30 seconds" is {"cycle": 30, "from": 0, "to": 10} with no within (a within would end it for
+  good); "stops",
   "ends" or "burns out" needs within or a height limit; "regrows" or "later" needs after or cycle.
   The player also sees a description generated from your plan next to your say, so a mismatch shows.`;
 
@@ -162,6 +168,35 @@ const PlanParam = Type.Object({
 const UnsupportedParam = Type.Array(Type.String(), { description: 'What part of the whim can\'t be done, a few words each, e.g. ["double-click", "days"]. At most 3.' });
 
 /**
+ * Rewrite a Python-style literal as JSON: 'single-quoted' strings become "double-quoted" (an apostrophe inside
+ * a double-quoted string stays as it is), True/False/None become true/false/null, and a trailing comma before
+ * a closing bracket is dropped. Returns null when a string never closes.
+ */
+export function pythonToJson(s) {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "'" || ch === '"') {
+      let body = "", j = i + 1;
+      for (; j < s.length && s[j] !== ch; j++) {
+        if (s[j] === "\\" && j + 1 < s.length) { j++; body += s[j] === "'" ? "'" : "\\" + s[j]; }
+        else body += s[j] === '"' ? '\\"' : s[j];
+      }
+      if (j >= s.length) return null;
+      out += '"' + body + '"'; i = j;
+    } else if (/[A-Za-z_]/.test(ch)) {
+      let j = i; while (j < s.length && /\w/.test(s[j])) j++;
+      const word = s.slice(i, j);
+      out += { True: "true", False: "false", None: "null" }[word] || word; i = j - 1;
+    } else if (ch === ",") {
+      let j = i + 1; while (j < s.length && /\s/.test(s[j])) j++;
+      if (s[j] !== "]" && s[j] !== "}") out += ch;
+    } else out += ch;
+  }
+  return out;
+}
+
+/**
  * Some models' chat templates show earlier tool calls with nested arguments as Python-style text, e.g.
  * "{'circle': [39, 3, 10]}", and the model then copies that form. Read such a string back as the object or
  * list it spells; anything else is left exactly as it was.
@@ -170,7 +205,7 @@ export function unstring(value) {
   if (typeof value === "string") {
     const s = value.trim();
     if (!/^[[{][\s\S]*[\]}]$/.test(s)) return value;
-    for (const form of [s, s.replace(/'/g, '"').replace(/\bTrue\b/g, "true").replace(/\bFalse\b/g, "false").replace(/\bNone\b/g, "null")]) {
+    for (const form of [s, pythonToJson(s)].filter((f) => typeof f === "string")) {
       try { return unstring(JSON.parse(form)); } catch { /* Try the next form. */ }
     }
     return value;
@@ -178,6 +213,106 @@ export function unstring(value) {
   if (Array.isArray(value)) return value.map(unstring);
   if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, unstring(v)]));
   return value;
+}
+
+/** A model reply that failed on the way (the connection dropped or timed out), not one the server refused. */
+export function droppedReply(message) {
+  if (!message || message.stopReason !== "error") return false;
+  return /\b(?:terminated|timed? ?out|socket|ECONNRESET|ECONNREFUSED|EPIPE|UND_ERR|fetch failed|other side closed|Connection error|premature close|network|50[234]\b)/i.test(String(message.errorMessage || ""));
+}
+
+/**
+ * Wrap a stream function so a reply that fails on the way is asked for again, up to `retries` times. Asking
+ * again is safe: a reply only proposes tool calls, and none has run yet. The wrapped stream hands on only the
+ * finished reply (done or error), so a half-streamed reply that was dropped never reaches the agent.
+ *
+ * A reply that stalls is cut and counts as dropped: no first token within firstTokenMs (a shared server may be
+ * queueing it, so this is generous), or nothing more for stallMs once it has started. onWait(true) is called
+ * when a request goes out and onWait(false) when its first token arrives (or it ends), so a caller can tell
+ * time spent waiting for the server from time the model spends working.
+ */
+export function retryingStream(inner, { retries = 2, waitMs = [3000, 10000], firstTokenMs = 150_000, stallMs = 60_000,
+  onRetry = () => {}, onWait = () => {} } = {}) {
+  const pause = (k) => (Array.isArray(waitMs) ? waitMs[Math.min(k, waitMs.length - 1)] : waitMs);
+  return (model, context, options = {}) => {
+    const out = createAssistantMessageEventStream();
+    const outer = options.signal;
+    (async () => {
+      for (let attempt = 0; ; attempt++) {
+        let final = null, kind = "error", stalled = null, timer = null, waiting = true;
+        const ac = new AbortController();
+        const stopOnOuter = () => ac.abort();
+        if (outer) outer.addEventListener("abort", stopOnOuter);
+        const arm = (ms, why) => { clearTimeout(timer); timer = setTimeout(() => { stalled = why; ac.abort(); }, ms); };
+        const started = () => { if (waiting) { waiting = false; onWait(false); } };
+        onWait(true);
+        arm(firstTokenMs, `timed out: no reply from the model server for ${Math.round(firstTokenMs / 1000)} s`);
+        try {
+          const s = await inner(model, context, { ...options, signal: ac.signal });
+          for await (const ev of s) {
+            if (ev.type === "done" || ev.type === "error") { kind = ev.type; final = ev.type === "done" ? ev.message : ev.error; break; }
+            if (ev.type !== "start") { started(); arm(stallMs, `timed out: the reply stalled for ${Math.round(stallMs / 1000)} s`); }
+          }
+          if (!final) final = await s.result();
+        } catch (e) {
+          final = { role: "assistant", content: [], stopReason: "error", errorMessage: String((e && e.message) || e), timestamp: Date.now() };
+        } finally {
+          clearTimeout(timer); started();
+          if (outer) outer.removeEventListener("abort", stopOnOuter);
+        }
+        if (outer && outer.aborted) final = { ...final, stopReason: "aborted", errorMessage: final.errorMessage || "Request was aborted." };
+        else if (stalled) { kind = "error"; final = { ...final, stopReason: "error", errorMessage: stalled }; }
+        if (kind === "error" && attempt < retries && !(outer && outer.aborted) && droppedReply(final)) {
+          onRetry(final.errorMessage, attempt + 1);
+          await new Promise((r) => setTimeout(r, pause(attempt)));
+          if (!(outer && outer.aborted)) continue;
+        }
+        out.push(kind === "done" ? { type: "done", reason: final.stopReason, message: final } : { type: "error", reason: final.stopReason, error: final });
+        return;
+      }
+    })();
+    return out;
+  };
+}
+
+/**
+ * Time a whim: work counts against TIME_LIMIT_MS, waiting for a server to start a reply doesn't, and the whole
+ * thing is capped at WAIT_LIMIT_MS. over() says why to stop, or "".
+ */
+export function workClock(start = Date.now(), { work = TIME_LIMIT_MS, total = WAIT_LIMIT_MS, now = Date.now } = {}) {
+  let waitedMs = 0, since = null;
+  const waited = () => waitedMs + (since === null ? 0 : now() - since);
+  return {
+    wait: (on) => { if (on && since === null) since = now(); else if (!on && since !== null) { waitedMs += now() - since; since = null; } },
+    waited,
+    over: () => (now() - start - waited() > work ? `The model ran out of time (${Math.round(work / 1000)} s of work).`
+      : now() - start > total ? `The model server was too busy: gave up after ${Math.round(total / 60000)} minutes.` : ""),
+  };
+}
+
+/**
+ * A thread that paints its tiles out of its own material condition acts on each tile once and stops there
+ * (e.g. "stone sweats water" written as: on stone, set wet_stone and add water). Say so, or "".
+ */
+export function selfStopping(t) {
+  const m = t.when.find((c) => Array.isArray(c.material));
+  const paint = t.do.find((a) => typeof a.set_material === "string");
+  if (!m || !paint || m.material.includes(paint.set_material)) return "";
+  const others = t.do.filter((a) => a !== paint).map((a) => Object.keys(a)[0]);
+  return `Thread "${t.name}" turns its tiles to ${paint.set_material}, which its own {"material": ${JSON.stringify(m.material)}} condition leaves out, so each tile acts once and then stops` +
+    (others.length ? ` (its ${others.join(", ")} stops too). To keep it going, add "${paint.set_material}" to that material list.` : ".");
+}
+
+/** New tools named like a tool the player already has, as sentences for the model; [] when there are none. */
+export function sameNameTools(world, clean) {
+  const out = [];
+  for (const p of clean.powers || []) {
+    if (p.replaces) continue;
+    for (const s of world.skeins) for (const q of s.powers || []) {
+      if (!q.retired && q.name.trim().toLowerCase() === String(p.name || "").trim().toLowerCase()) out.push(`The player already has a tool "${q.name}" (id ${q.id}), and this plan adds another with the same name`);
+    }
+  }
+  return out;
 }
 
 export function localModel(config) {
@@ -302,6 +437,10 @@ export function preview(world, clean, spot, seconds = PREVIEW_SECONDS, useAt = n
       ? `Thread "${t.name}" never acted: its conditions never held on any tile.`
       : `Thread "${t.name}": its conditions held on ${fmt(f.total / Math.max(1, f.ticks), 0)} tiles at a time, during ${Math.round((100 * f.ticks) / ticks)}% of the time (actions with their own chance change fewer tiles than that).`);
   });
+  for (const t of clean.threads.concat(...(clean.powers || []).map((p) => p.threads || []))) {
+    const self = selfStopping(t);
+    if (self) lines.push(self);
+  }
   const states = WF.useStates(withPlan);
   for (const { p, trial, before, r } of uses) {
     if (!r.ok) { lines.push(`Tool "${p.name}" couldn't be used at (${at[0]},${at[1]}): ${r.message}`); continue; }
@@ -326,7 +465,9 @@ export function preview(world, clean, spot, seconds = PREVIEW_SECONDS, useAt = n
   }
   const timed = (c) => "within" in c || "after" in c || (c.not && timed(c.not));
   if (clean.threads.length && !clean.threads.some((t) => t.when.some(timed))) {
-    lines.push("None of these threads ever stops on its own: they run until the player switches them off. If the whim has an end, add a within condition.");
+    lines.push(clean.threads.some((t) => t.when.some((c) => "cycle" in c))
+      ? "None of these threads ever stops on its own: the cycles repeat until the player switches them off, which is right for \"every N seconds\". Add a within only if the whim says when it all ends, and make it longer than the cycle."
+      : "None of these threads ever stops on its own: they run until the player switches them off. If the whim has an end, add a within condition.");
   }
   for (const id of clean.switch_off) {
     const s = world.skeins.find((k) => k.id === id);
@@ -350,7 +491,7 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
   const copy = WF.load(WF.save(world));
   const events = [];
   const emit = (e) => { const ev = { at: Date.now(), ...e }; events.push(ev); onEvent(ev); };
-  let pushedBackDecline = false, pushedBackPropose = false, finished = null, toolCalls = 0, confirmedOff = "", lastTried = null, lastCall = "", repeats = 0;
+  let pushedBackDecline = false, pushedBackPropose = false, pushedBackSameName = false, finished = null, toolCalls = 0, confirmedOff = "", lastTried = null, lastCall = "", repeats = 0;
 
   // commit and propose share every check. The outcome is decided by routeOutcome from the player's request,
   // the plan and the model's message, so a substitute is never committed as if it were the real thing.
@@ -381,6 +522,11 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
       const claims = checkClaims(c.clean.say, c.clean, CAPS, { proposing: name === "propose" })
         .concat(checkClaims((plan.unsupported || []).map(String).join(". "), c.clean, CAPS, { namesMissing: true }));
       if (claims.length) throw new Error(`${Nothing}: your say doesn't match the plan.\n- ` + claims.join("\n- "));
+      const twins = sameNameTools(copy, c.clean);
+      if (twins.length && !pushedBackSameName) {
+        pushedBackSameName = true;
+        throw new Error(`${Nothing} yet: ${twins.join("; ")}. If this plan changes that tool, add "replaces": "<its id>" to the new tool and ${name} again. If the player wants a second tool, give it a different name.`);
+      }
       const route = routeOutcome({ whim, tool: name, unsupported: plan.unsupported, say: c.clean.say, caps: CAPS });
       if (route.outcome === "proposed" && !route.unsupported.length) {
         throw new Error("Nothing was proposed: list in unsupported what part of the whim can't be done, or commit if the whole whim is done.");
@@ -389,7 +535,8 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
       // list is usually a description of the plan; ask once for a commit instead.
       if (route.outcome === "proposed" && !pushedBackPropose && !requestNeeds(whim, CAPS).length && !admissions(c.clean.say).length) {
         pushedBackPropose = true;
-        throw new Error(`Not proposed yet: nothing in the whim asks for something Glomus can't do, and unsupported (${route.unsupported.map((u) => JSON.stringify(u)).join(", ")}) should only name missing abilities like "double-click" or "days", never what you made. If the whole whim is done, call commit with this plan. If something really is missing, call propose again.`);
+        // No example abilities here: models copy them into the list ("days" for a 10-second rain cloud).
+        throw new Error(`Not proposed yet: nothing in the whim asks for something Glomus can't do. unsupported (${route.unsupported.map((u) => JSON.stringify(u)).join(", ")}) should only name an ability the player's own words ask for that Glomus lacks, never what you made or an example from the instructions. If the whole whim is done, call commit with this plan. If something the player asked for really is missing, call propose again.`);
       }
       const offKey = c.clean.switch_off.slice().sort().join(",");
       if (route.outcome === "committed" && offKey && offKey !== confirmedOff) {
@@ -405,6 +552,7 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
     },
   });
   const started = Date.now();
+  const clock = workClock(started);
 
   const tools = [
     {
@@ -413,12 +561,14 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
       execute: async (_id, p) => text(lookAt(copy, unstring(p.area), spot)),
     },
     {
-      name: "read_skein", label: "Read skein", description: "The full plan (materials, edits, threads) of an existing skein, by id.",
+      name: "read_skein", label: "Read skein", description: "The full plan (materials, edits, threads, tools) of an existing skein, by id.",
       parameters: Type.Object({ id: Type.Number() }),
       execute: async (_id, p) => {
         const s = copy.skeins.find((k) => k.id === Math.round(p.id));
         if (!s) throw new Error(`No skein ${p.id}. Skeins: ${copy.skeins.map((k) => k.id).join(", ")}.`);
-        return text(JSON.stringify({ id: s.id, name: s.name, on: s.on, materials: s.materials, edits: s.edits, threads: s.threads }));
+        const powers = (s.powers || []).map((p) => ({ id: p.id, name: p.name, icon: p.icon, brush: p.brush, edits: p.edits, threads: p.threads, ...(p.retired ? { retired: p.retired } : {}) }));
+        return text(JSON.stringify({ id: s.id, name: s.name, on: s.on, materials: s.materials, edits: s.edits, threads: s.threads, ...(powers.length ? { powers } : {}) }) +
+          (powers.some((p) => !p.retired) ? `\nTo change one of these tools, make a new tool with "replaces": "<its id>".` : ""));
       },
     },
     {
@@ -433,7 +583,9 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
         const pv = preview(copy, c.clean, spot, PREVIEW_SECONDS, useAt);
         emit({ kind: "tried", name: c.clean.name, summary: pv.text.split("\n").slice(1, 3).join(" "), problems: c.problems.length });
         const claims = c.clean.say ? checkClaims(c.clean.say, c.clean, CAPS) : [];
+        const twins = sameNameTools(copy, c.clean);
         const notes = [
+          twins.length ? twins.join("\n") + `. To change that tool, add "replaces": "<its id>" to the new one; for a second tool, pick another name.` : "",
           "What the player will read about this plan (generated from it):\n- " + WF.explainPlan(c.clean, copy).join("\n- "),
           claims.length ? "Your say claims things the plan doesn't do; committing it like this will be refused:\n- " + claims.join("\n- ") : "",
         ].filter(Boolean).join("\n");
@@ -463,6 +615,8 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
   const agent = new Agent({
     initialState: { systemPrompt: LANGUAGE, model, tools },
     getApiKey: async () => apiKey || "local",
+    // A dropped or timed-out reply is asked for once more instead of ending the whim.
+    streamFn: retryingStream(streamSimple, { onRetry: (why) => emit({ kind: "retry", message: String(why).slice(0, 120) }), onWait: clock.wait }),
     toolExecution: "sequential",
     beforeToolCall: async ({ toolCall }) => {
       toolCalls++;
@@ -498,21 +652,22 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
       if (said) emit({ kind: "said", text: said.slice(0, 500) });
     }
   });
-  const timer = setTimeout(() => agent.abort(), TIME_LIMIT_MS);
+  let outOfTime = "";
+  const timer = setInterval(() => { const why = !outOfTime && clock.over(); if (why) { outOfTime = why; agent.abort(); } }, 500);
   const onAbort = () => agent.abort();
   if (signal) signal.addEventListener("abort", onAbort);
   emit({ kind: "start", whim });
   try {
     await agent.prompt("World report:\n" + WF.describe(copy, spot) + "\n\nThe player's whim: " + whim);
   } finally {
-    clearTimeout(timer);
+    clearInterval(timer);
     if (signal) signal.removeEventListener("abort", onAbort);
   }
   const lastText = [...agent.state.messages].reverse().find((m) => m.role === "assistant");
   const reply = lastText ? (lastText.content || []).filter((c) => c.type === "text").map((c) => c.text).join(" ").trim() : "";
   // A server's error text could quote the key back (in errorMessage and in the transcript); scrub it here.
   const scrub = (v) => (apiKey && v != null ? JSON.parse(JSON.stringify(v).split(apiKey).join("[key]")) : v);
-  const error = scrub(agent.state.errorMessage || null);
+  const error = scrub((outOfTime && !finished ? outOfTime : agent.state.errorMessage) || null);
   if (error) emit({ kind: "error", message: String(error).slice(0, 300) });
   const outcome = finished ? finished.outcome : reply && !error ? "answered" : "failed";
   const plan = finished ? finished.clean : null;
@@ -520,7 +675,7 @@ export async function shapeWhim({ world, spot, whim, model, apiKey = "", onEvent
     outcome, committed: outcome === "committed", plan, problems: finished ? finished.problems : [],
     unsupported: finished ? finished.unsupported : [], explain: plan ? WF.explainPlan(plan, copy) : [],
     say: finished ? finished.say || reply : reply, error, events, messages: scrub(agent.state.messages),
-    seconds: (Date.now() - started) / 1000, toolCalls,
+    seconds: (Date.now() - started) / 1000, waitSeconds: Math.round(clock.waited() / 100) / 10, toolCalls,
   };
 }
 

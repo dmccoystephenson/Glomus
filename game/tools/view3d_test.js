@@ -44,7 +44,7 @@ async function test(name, fn) {
 }
 
 // ---------- the server, on a port of its own ----------
-const port = await freePort(8850);
+const port = await freePort(Number(process.env.GLOMUS_TEST_PORT) || 8850);
 const server = spawn(process.execPath, ["server/server.js", "--port", String(port), "--no-browser"], { cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] });
 const base = await new Promise((resolve, reject) => {
   let out = "";
@@ -78,7 +78,7 @@ async function waitFrames(page, more = 2) {
 }
 async function open3d(page) {
   await page.click("#view3d");
-  await page.waitForFunction(() => window.__glomus3d && window.__glomus3d(), null, { timeout: 60000 });
+  await page.waitForFunction(() => window.__glomus3d && window.__glomus3d(), null, { timeout: 120000 });
   await waitFrames(page, 2);
 }
 /** Where tile (x, y) is on screen, in viewport pixels. */
@@ -111,6 +111,38 @@ try {
     assert.strictEqual(await page.isHidden("#map"), true, "the flat map should be hidden");
   });
 
+  await test("the ground is drawn four times finer than the tiles, and each animal has a body", async () => {
+    const s = await page.evaluate(() => ({ ...window.__glomus3d().kit.stats(), ...window.__glomus3d().lookStats, alive: window.__glomusWorld().creatures.filter((c) => !c.dead).length }));
+    const fine = 381 * 253, half = 191 * 127;
+    assert.ok(s.terrain === fine || (s.quality === 0 && s.terrain === half), "terrain samples: " + s.terrain);
+    assert.strictEqual(s.bodies, s.alive, "a body per living animal");
+    assert.ok(s.alive === 0 || (s.meshes >= 1 + s.alive && s.bodyVertices > 300 * s.alive), JSON.stringify(s));
+  });
+
+  await test("day and night follow the world's clock, and the daylight button pins the sun", async () => {
+    // Moving the clock would also move the weather's next change: keep the weather as it was.
+    const saved = await page.evaluate(() => { const w = window.__glomusWorld(); return { tick: w.tick, weather: { ...w.weather } }; });
+    const at = (tick) => page.evaluate(([tick, weather]) => { const w = window.__glomusWorld(); w.tick = tick; w.weather = { ...weather, until: tick + 600 }; return true; }, [tick, saved.weather]);
+    const sky = () => page.evaluate(() => window.__glomus3d().sky);
+    await page.evaluate(() => window.__glomus3d().setDaylight("clock"));
+    await at(0); await waitFrames(page, 1);
+    const day = await sky();
+    await at(Math.round(0.75 * 3600)); await waitFrames(page, 1);
+    const night = await sky();
+    assert.ok(day.toSun[1] > 0 && night.toSun[1] < 0 && night.night > 0.9, JSON.stringify([day.toSun, night.toSun]));
+    const pts = await page.evaluate(() => window.__glomus3d().lookStats.points);
+    assert.ok(pts > 100, "stars and small lights at night: " + pts);
+    await page.evaluate(() => document.querySelector(".g3-daylight").click());   // frames are slow here: no waiting for it to hold still
+    await waitFrames(page, 1);
+    assert.strictEqual(await page.evaluate(() => window.__glomus3d().daylight), "day");
+    assert.ok((await sky()).toSun[1] > 0.4, "pinned daylight");
+    assert.match(await page.textContent(".g3-daylight"), /Always day/);
+    await page.evaluate(() => document.querySelector(".g3-daylight").click());   // frames are slow here: no waiting for it to hold still
+    assert.strictEqual(await page.evaluate(() => window.__glomus3d().daylight), "clock");
+    await page.evaluate(() => window.__glomus3d().setDaylight("day"));
+    await page.evaluate((saved) => { const w = window.__glomusWorld(); w.tick = saved.tick; w.weather = saved.weather; }, saved);
+  });
+
   await test("a tap on the land picks the spot", async () => {
     const p = await tileXY(page, 48, 32);
     await page.mouse.click(p.x, p.y);
@@ -139,9 +171,15 @@ try {
     assert.strictEqual(uses.length, 1, JSON.stringify(uses));
     assert.ok(Math.abs(uses[0].at[0] - 30) <= 2 && Math.abs(uses[0].at[1] - 20) <= 2, JSON.stringify(uses[0]));
     assert.match(await page.textContent("#hover"), /Hill: \d+ tiles changed/);
-    await waitFrames(page, 1);
-    const st = await page.evaluate(() => window.__glomus3d().overlayStats);
-    assert.ok(st.labels >= 1, "the use's note should show as a label");
+    // The note lives 5 s; on slow software rendering a frame can take most of that, so poll frame by frame.
+    let st = null;
+    for (let k = 0; k < 8 && !(st && st.labels >= 1); k++) {
+      await waitFrames(page, 1);
+      st = await page.evaluate(() => window.__glomus3d().overlayStats);
+    }
+    const why = await page.evaluate(() => ({ hover: document.getElementById("hover").textContent, kitRunning: window.__glomus3d().kit.running,
+      frames: window.__glomus3d().kit.stats ? window.__glomus3d().kit.stats().frames : null, now: performance.now() }));
+    assert.ok(st.labels >= 1, "the use's note should show as a label: " + JSON.stringify({ st, why }));
     await shot(page, "desktop-click-tool.png");
   });
 

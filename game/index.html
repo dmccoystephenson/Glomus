@@ -97,6 +97,13 @@
   .status-fizzled { color: var(--bad); }
   details summary { cursor: pointer; color: var(--muted); font-size: 12px; }
   .empty { color: var(--muted); font-size: 12px; }
+  dialog#slots { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; width: min(520px, calc(100vw - 32px)); }
+  dialog#slots::backdrop { background: #0008; }
+  dialog#slots ul { list-style: none; padding: 0; margin: 10px 0; max-height: 50vh; overflow-y: auto; }
+  dialog#slots li { padding: 5px 0; border-top: 1px solid var(--line); }
+  dialog#slots li.linked strong { color: var(--accent); }
+  dialog#slots .meta { color: var(--muted); font-size: 12px; }
+  dialog#slots input { background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; flex: 1; min-width: 0; }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; }
     aside { border-left: none; border-top: 1px solid var(--line); max-height: none; }
@@ -117,6 +124,7 @@
   <button id="view3d" class="small" title="See the world in 3D: drag to turn, scroll or pinch to zoom, tap to pick a spot or use a tool, drag with a drag tool (V)" aria-pressed="false">3D</button>
   <button id="walk" class="small" title="Walk the land in 3D as a visitor: W A S D or the arrows, Q/E turn, Shift hurries, C switches between behind and through the eyes, R puts the spot or uses your tool where you stand (B)" aria-pressed="false">Walk</button>
   <button id="newworld" class="small">New world</button>
+  <button id="worlds" class="small" title="Save this world to a named slot, or open one. Another program on this computer with the access token can use the same slots.">Slots</button>
 </header>
 <main>
   <section class="mapcol">
@@ -181,9 +189,17 @@
     </section>
   </aside>
 </main>
+<dialog id="slots" aria-label="World slots">
+  <h2>World slots</h2>
+  <div class="row"><input data-slot-name maxlength="40" placeholder="slot name, e.g. valley" aria-label="Slot name"><button type="button" class="small primary" data-slot-save>Save to slot</button></div>
+  <ul data-slot-list></ul>
+  <p class="hint" data-slot-note role="status"></p>
+  <div class="row"><button type="button" class="small" data-slot-back hidden>Put back the world you had</button><span class="spacer"></span><button type="button" class="small" data-slot-close>Close</button></div>
+</dialog>
 <script type="module">
 import * as WF from "./world.js";
 import { createWalker } from "./walk3d.js";
+import { mountSlots } from "./slots.js";
 const { W, H, TPS, WET, MAX_H } = WF;
 // ?seed=N starts a fresh world from that seed in its own save slot, leaving the player's world alone.
 const SEED = new URLSearchParams(location.search).get("seed");
@@ -880,8 +896,15 @@ $("newworld").onclick = () => {
   world = WF.makeWorld((Math.random() * 2 ** 31) | 0); history = []; queue.length = 0; spot = null; tool = "spot";
   showSpot(); renderQueue(); renderSkeins(); saveNow();
 };
+// World slots (slots.js): the world from a slot replaces this one the way a new world does.
+mountSlots({ token, key: SAVE_KEY, getWorld: () => WF.save(world), button: $("worlds"), dialog: $("slots"),
+  setWorld: (data) => {
+    const next = WF.load(data);
+    world = next; history = []; queue.length = 0; spot = null; tool = "spot";
+    showSpot(); renderQueue(); renderSkeins(); saveNow();
+  } });
 document.addEventListener("keydown", (ev) => {
-  if (ev.target.closest("textarea, input")) return;
+  if (ev.target.closest("textarea, input, dialog")) return;
   if (ev.code === "Space") { ev.preventDefault(); $("pause").click(); }
   if (ev.key === "Escape") { if (tool !== "spot") selectTool("spot"); else { spot = null; showSpot(); } }
   if (/^[1-9]$/.test(ev.key) && !ev.ctrlKey && !ev.metaKey && !ev.altKey) { const t = paletteTools()[Number(ev.key) - 1]; if (t) selectTool(t.power.id); }

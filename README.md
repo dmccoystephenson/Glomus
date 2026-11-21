@@ -37,6 +37,28 @@ the local model if nothing answers at the configured address.
     It doesn't replay the world; *Rewind* does that.
 - **Rewind** goes back up to three minutes. **Rain**, **Pause** (Space) and **speed** are in the header.
 - *Write a plan by hand* applies a plan in the same JSON the model writes.
+- **Slots** (header) saves this world to a named slot the local server keeps, or opens one. See
+  [World slots](#world-slots).
+
+### World slots
+
+A slot is a named world the local server keeps in `workspace/worlds/<name>.json`, in `world.js`'s own save
+format (version 1), with who last wrote it and when. Another program on this computer that holds the access
+token in `workspace/token.txt` can fetch a slot, change the world and write it back, so one world can be
+carried between Glomus and that program.
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/worlds` | every slot's `name`, `rev`, `savedAt`, `savedBy` and `tick` |
+| `GET /api/worlds/<name>` | the same, with its `world` |
+| `POST /api/worlds/<name>` | `{world, by, base}` writes it. `base` is the `rev` being replaced, or `null` for a new slot |
+
+Every route needs the `X-Glomus-Token` header and a `Host` of `127.0.0.1` or `localhost`, like the rest of
+`/api`. Names are 1 to 40 lowercase letters, digits, `-` or `_`. A world must load in `world.js` and stay under
+1 MB, and there are at most 64 slots. A write whose `base` isn't the slot's current `rev` is refused with 409
+and the slot's current details, so two writers can't overwrite each other unawares; the page asks you to press
+again. The world a write replaces is kept in `workspace/worlds/previous/<name>.json`, and opening a slot on the
+page keeps the world it replaces, with **Put back the world you had**. Nothing deletes a slot.
 
 ### Tools
 
@@ -92,6 +114,15 @@ right-drag or Shift-drag to pan. It shows what the map shows:
   whims being made (waiting, working, needing your OK, fizzled), the flash after a use and its note.
 - Rain, animals in their species' colour and pattern, and a × where one died.
 
+The sun keeps the world's own clock: a day and night lasts six minutes of world time, with long shadows and a
+warm light at dawn and dusk, moonlight and stars at night, and a greyer, dimmer light while it rains (the land
+stays dark and wet for a while after). The button at the top right of the view, **Always day**, pins an
+afternoon sun for when you'd rather just see; it remembers your choice. Up close the ground is drawn four times
+finer than the map's tiles, with grass, rock, sand and snow each looking like themselves and soft, ragged edges
+between them. Water is clearer in the shallows and darker in pools, glints in the sun and carries foam where
+it runs fast. Animals have bodies (Mossback wears moss on its back), face where they're going and put their
+heads down to eat and drink. Ground whose material glows (a whim's "glowing moss", say) lights up the night.
+
 **Walk** (or **B**) puts you on the land as a visitor, seen from behind. **W A S D** or the arrows walk, **Q**
 and **E** turn, **Shift** hurries, and dragging still turns the view. **C** switches to seeing through the
 visitor's eyes and back. **R** puts the spot where you stand, or uses the picked tool there. You follow the
@@ -120,6 +151,12 @@ one moves `baseUrl`, nothing is started. The key is only sent as the model serve
 it isn't logged, sent to the page or saved with the whims. A server that answers 503, or says on `/health`
 that it's paused, shows as busy, and whims wait in the queue until it's back.
 
+A shared or remote server can drop a connection or sit on a request. The shaper asks again (up to twice,
+after a short pause) when a reply is cut off, times out, or stalls: no first token within 150 s, or nothing
+more for 60 s once it has started. Asking again is safe because a reply only proposes tool calls. A whim gets
+240 s of the model's work; time spent waiting for the server to start a reply doesn't count against that, but
+no whim runs longer than 10 minutes in all. `npm run eval` shows the waiting time and retries for each case.
+
 ## How it's built
 
 - `game/world.js`: the world as an ES module with no DOM: terrain, water, erosion, weather, the thread
@@ -139,6 +176,7 @@ that it's paused, shows as busy, and whims wait in the queue until it's back.
 - `server/server.js`: the local server. Every whim is saved as a replayable case in `workspace/whims/`: the
   world it started from, the full transcript, each tool call and the result.
 - `server/model.js`: finds or starts the model server.
+- `server/worlds.js`: world slots on disk; `game/slots.js` is their dialog on the page.
 - `game/walk3d.js`: walking the 3D view. It reads the ground to stand on and moves the camera, and never changes
   the world.
 - `game/view3d.js`: the 3D view. It turns the world into arrays (the ground, the water as one translucent
@@ -157,7 +195,7 @@ or rewound.
 ## Tests and evals
 
 ```powershell
-npm test                                    # the world, tools, undo, animals and the honesty checks (77 checks, no model)
+npm test                                    # the world, tools, undo, animals, honesty checks and world slots (no model)
 npm run test:3d                             # the 3D view in headless Chromium: taps, tools, strokes, hover, rain, phone touch
 npm run eval                                # every eval case through the real model
 npm run eval -- --only floodgate --repeat 3

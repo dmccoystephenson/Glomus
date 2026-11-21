@@ -94,8 +94,23 @@ test("'stops after 30 seconds' is an ending (within), 'starts after 10 seconds' 
   passes("The rain starts after 10 seconds.", { threads: [rain([{ after: 10 }])] });
   passes("After a minute, the rain stops.", { threads: [rain([{ within: 60 }])] });
 });
+test("a cycle's window backs \"for N seconds\" said with the cycle; the thread that breaks a claim is named with a fix", () => {
+  const gate = { name: "Floodgate release", area: spot, when: [{ cycle: 30, from: 0, to: 10 }], do: [{ add_water: 2 }] };
+  passes("It runs in 30-second cycles, releasing water for 10 seconds each cycle.", { threads: [gate] });
+  passes("A 10-second burst of water each cycle, every 30 seconds.", { threads: [gate] });
+  fails("It runs in 30-second cycles.", { threads: [rain([])] }, /every 30-second|"cycle": 30/);
+  // A second water thread that never pauses makes "for 10 seconds every 30 seconds" untrue (seen from a model).
+  const always = { name: "Water reservoir", area: spot, when: [{ material: ["soil"] }], do: [{ add_water: 1 }] };
+  fails("A floodgate that releases water for 10 seconds every 30 seconds.", { threads: [always, gate] }, /thread "Water reservoir" doesn't stop .* "when": \[\{"material":\["soil"\]\},\{"cycle":30,"from":0,"to":10\}\]/);
+  fails("A rain cloud rains for 10 seconds.", { threads: [rain([])] }, /thread "Rain" doesn't stop after 10 seconds\. Either give thread "Rain" "when": \[\{"within":10\}\]/);
+});
 test("durations, recurrences and deltas are checked; minutes convert", () => {
-  passes("A burst of water for 10 seconds every 30 seconds.", { threads: [rain([{ cycle: 30, from: 0, to: 10 }, { within: 10 }])] });
+  passes("A burst of water for 10 seconds every 30 seconds.", { threads: [rain([{ cycle: 30, from: 0, to: 10 }])] });
+  // A within as long as the burst ends the thread for good: it would never repeat.
+  fails("A burst of water for 10 seconds every 30 seconds.", { threads: [rain([{ cycle: 30, from: 0, to: 10 }, { within: 10 }])] }, /never|before the cycle comes round/);
+  fails("A burst of water for 20 seconds every 30 seconds.", { threads: [rain([{ cycle: 30, from: 0, to: 10 }])] }, /"to":20/);
+  fails("A burst of water for 10 seconds.", { threads: [rain([{ cycle: 30, from: 0, to: 10 }])] }, /within/);
+  passes("A burst of water every 30 seconds for the next minute.", { threads: [rain([{ cycle: 30, from: 0, to: 10 }, { within: 60 }])] });
   fails("A burst of water every 30 seconds.", { threads: [rain([])] }, /every 30 seconds/);
   passes("A wildfire sweeps these hills for one minute, then burns out.", {
     materials: [{ name: "fire", color: "#ff5522" }],

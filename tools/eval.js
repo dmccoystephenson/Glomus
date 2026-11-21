@@ -227,10 +227,11 @@ for (const c of suite.cases) {
     const newMaterials = new Set(withPlan.materials.map((_, j) => j).filter((j) => j >= knownMaterials));
     const checks = c.checks.map((check) => { const [ok, note] = judge(check, { result, without, withPlan, fires, ticks, plan, newMaterials, spot: c.spot }); return { type: check.type, ok, note }; });
     const passed = checks.every((x) => x.ok);
-    console.log(`${passed ? "PASS" : "FAIL"}  ${result.outcome}, ${result.seconds.toFixed(0)}s, ${result.toolCalls} tool calls  ` + checks.map((x) => `${x.ok ? "✓" : "✗"} ${x.type} (${x.note})`).join("  "));
+    const retries = result.events.filter((e) => e.kind === "retry").length;
+    console.log(`${passed ? "PASS" : "FAIL"}  ${result.outcome}, ${result.seconds.toFixed(0)}s${result.waitSeconds >= 1 ? ` (${result.waitSeconds.toFixed(0)}s before replies started)` : ""}, ${result.toolCalls} tool calls${retries ? `, ${retries} retried` : ""}  ` + checks.map((x) => `${x.ok ? "✓" : "✗"} ${x.type} (${x.note})`).join("  "));
     runs.push({ id: c.id, whim: c.whim, spot: c.spot, passed, checks, outcome: result.outcome, committed: result.committed, say: result.say, plan: result.plan,
       unsupported: result.unsupported, explain: result.explain,
-      error: result.error, seconds: result.seconds, toolCalls: result.toolCalls, events: result.events, messages: result.messages });
+      error: result.error, seconds: result.seconds, waitSeconds: result.waitSeconds, retries, toolCalls: result.toolCalls, events: result.events, messages: result.messages });
   }
 }
 
